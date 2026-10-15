@@ -60,6 +60,8 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
         public bool Entered;
         public CompiledFunction? Function;
         public Dictionary<string, Cell> Locals = new(descriptor.Locals.Length);
+        public Cell[] LocalSlots = [];
+        public ImmutableArray<VariableDescriptor> LocalLayout;
         public Dictionary<string, SlotReference> Aliases = [];
         public bool OwnsLocals = true;
         public LinkedListNode<Frame>? PoolNode;
@@ -258,6 +260,7 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
     private void Initialize(Frame frame, CompiledFunction function)
     {
         frame.Function = function;
+        if (frame.LocalLayout == function.Descriptor.Locals) return;
         for (int i = 0; i < function.Descriptor.Locals.Length; i++)
         {
             var local = function.Descriptor.Locals[i];
@@ -265,6 +268,9 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
             if (i < frame.Descriptor.Locals.Length && ReferenceEquals(local, frame.Descriptor.Locals[i])) continue;
             if (!frame.Locals.ContainsKey(local.Name)) frame.Locals.Add(local.Name, LocalCell(function.Descriptor, local));
         }
+        frame.LocalSlots = new Cell[function.Descriptor.Locals.Length];
+        for (int i = 0; i < frame.LocalSlots.Length; i++) frame.LocalSlots[i] = frame.Locals[function.Descriptor.Locals[i].Name];
+        frame.LocalLayout = function.Descriptor.Locals;
     }
     private Operand Pop()
     { if (stack.Count == 0) throw new ScriptException("STACK", "表达式栈为空"); var value = stack[^1]; stack.RemoveAt(stack.Count - 1); return value; }
@@ -528,6 +534,14 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
         if (spec.Reference) throw new ScriptException("UNBOUND_REFERENCE", "引用变量尚未绑定: " + spec.Name);
         return values[offset];
     }
+    private static EraValue ReadLocalVariable(Frame frame, Instruction instruction, ReadOnlySpan<long> indices)
+    {
+        if ((uint)instruction.LocalSlot >= (uint)frame.LocalSlots.Length) throw new ScriptException("BYTECODE", "局部变量位置无效");
+        var cell = frame.LocalSlots[instruction.LocalSlot];
+        long index = cell.Descriptor?.OffsetSpan(indices) ?? indices[0];
+        if (index < 0 || index >= cell.Length) throw new ScriptException("BOUNDS", "数组下标越界: " + instruction.Text);
+        return cell.Read((int)index);
+    }
     private bool allowDoTrain;
     void IBuiltinContext.DoTrain(long command)
     {
@@ -653,13 +667,17 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
             case Op.Throw: StartThrow(Value().AsString()); break;
             case Op.ReadVariable:
             case Op.ReadCharacter:
+            case Op.ReadLocal:
             {
                 int indexCount = Math.Max(1, instruction.Number);
                 Span<long> indices = indexCount <= 4 ? stackalloc long[indexCount] : new long[indexCount];
                 for (int i = indices.Length - 1; i >= 0; i--) indices[i] = Value().AsInt();
-                Put(instruction.Op == Op.ReadCharacter
-                    ? ReadCharacterVariable(instruction.ResolvedVariable ?? throw new ScriptException("BYTECODE", "角色读取缺少声明"), indices, instruction.Value.Integer != 0)
-                    : ReadVariable(frame, instruction.Text, indices, instruction.Value.Integer != 0, instruction.ResolvedVariable));
+                Put(instruction.Op switch
+                {
+                    Op.ReadLocal => ReadLocalVariable(frame, instruction, indices),
+                    Op.ReadCharacter => ReadCharacterVariable(instruction.ResolvedVariable ?? throw new ScriptException("BYTECODE", "角色读取缺少声明"), indices, instruction.Value.Integer != 0),
+                    _ => ReadVariable(frame, instruction.Text, indices, instruction.Value.Integer != 0, instruction.ResolvedVariable)
+                });
                 break;
             }
             case Op.Reference:

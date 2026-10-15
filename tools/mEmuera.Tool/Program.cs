@@ -143,6 +143,7 @@ static async Task<int> MainAsync(string[] args)
         long allocationStart = 0;
         var interactionAllocatedBytes = new List<long>();
         long progressAt = 0;
+        var compilationRequests = args.Contains("--profile-compilation") ? new Dictionary<string, int>() : null;
         int maxSteps = int.Parse(Option("--max-steps") ?? "1000000", System.Globalization.CultureInfo.InvariantCulture);
         while (++steps < maxSteps)
         {
@@ -153,7 +154,12 @@ static async Task<int> MainAsync(string[] args)
                 Console.Error.WriteLine($"progress elapsedMs={progressAt} steps={steps} mode={session.Mode} compiled={workspace.CacheMisses} readBytes={source.ReadBytes}");
             }
             var result = session.Step(new(1000));
-            if (result.Service is { } service) { session.Apply(await dispatcher.ExecuteAsync(service, ct)); continue; }
+            if (result.Service is { } service)
+            {
+                if (compilationRequests is not null && service.Payload is CompilePayload compile)
+                    compilationRequests[compile.FunctionId] = compilationRequests.GetValueOrDefault(compile.FunctionId) + 1;
+                session.Apply(await dispatcher.ExecuteAsync(service, ct)); continue;
+            }
             if (result.Reason == StopReason.Yielded) continue;
             if (interactionStart is { } started)
             {
@@ -230,6 +236,9 @@ static async Task<int> MainAsync(string[] args)
                 peakRssBytes = System.Diagnostics.Process.GetCurrentProcess().PeakWorkingSet64, workspace.CacheHits, workspace.CacheMisses,
                 workspace.SourceCacheHits, workspace.CachedSources, workspace.CompileMilliseconds, workspace.EstimatedCacheBytes,
                 source.ReadBytes, source.ReadFiles, indexed.Index.Identity, final.Mode, characterCount = final.Characters.Length,
+                compilationRequests = compilationRequests?.OrderByDescending(p => p.Value).Take(40)
+                    .Select(p => new { function = indexed.Index.ByFunctionId[p.Key].Name, source = indexed.Index.ByFunctionId[p.Key].Span, requests = p.Value }),
+                distinctCompiledFunctions = compilationRequests?.Count,
                 expected, consumedActions = next, totalActions = actions.Length, acceptanceSpecified = expected is not null,
                 os = System.Runtime.InteropServices.RuntimeInformation.OSDescription, framework = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription,
                 command = args, assemblies = Directory.EnumerateFiles(AppContext.BaseDirectory, "mEmuera*.dll").ToDictionary(path => Path.GetFileName(path)!,

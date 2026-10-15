@@ -1,0 +1,178 @@
+name: CI / CD
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: '1'
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      suffix: ${{ steps.version.outputs.suffix }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - id: version
+        shell: pwsh
+        run: ./.github/scripts/version.ps1
+
+  desktop:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2025
+            rid: win-x64
+          - os: ubuntu-24.04
+            rid: linux-x64
+          - os: macos-15
+            rid: osx-arm64
+          - os: macos-15-intel
+            rid: osx-x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - name: Restore locked dependencies
+        run: dotnet restore mEmuera.sln --locked-mode
+      - name: Build
+        run: dotnet build mEmuera.sln -c Release --no-restore
+      - name: Publish single executable
+        env:
+          RID: ${{ matrix.rid }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: ./.github/scripts/publish-desktop.ps1 -Rid $env:RID -Version $env:VERSION
+      - uses: actions/upload-artifact@v7
+        with:
+          path: artifacts/dist/*
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
+  android:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        rid: [android-arm64, android-x64]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RID: ${{ matrix.rid }}
+      VERSION: ${{ needs.version.outputs.version }}
+      SUFFIX: ${{ needs.version.outputs.suffix }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install Android workload
+        run: dotnet workload install android
+      - name: Install Android SDK dependencies
+        run: >-
+          dotnet build src/mEmuera.App.Android -t:InstallAndroidDependencies
+          -p:AndroidSdkDirectory="$ANDROID_HOME" -p:JavaSdkDirectory="$JAVA_HOME"
+          -p:AcceptAndroidSdkLicenses=True
+      - name: Build test APK
+        if: github.ref_type != 'tag'
+        run: >-
+          dotnet publish src/mEmuera.App.Android -c Release -r "$RID"
+          -p:RuntimeIdentifiers="$RID"
+          -p:AndroidSdkDirectory="$ANDROID_HOME" -p:JavaSdkDirectory="$JAVA_HOME"
+      - name: Build release APK
+        if: github.ref_type == 'tag'
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${ANDROID_KEYSTORE_BASE64:?Missing ANDROID_KEYSTORE_BASE64}"
+          : "${ANDROID_KEYSTORE_PASSWORD:?Missing ANDROID_KEYSTORE_PASSWORD}"
+          : "${ANDROID_KEY_ALIAS:?Missing ANDROID_KEY_ALIAS}"
+          : "${ANDROID_KEY_PASSWORD:?Missing ANDROID_KEY_PASSWORD}"
+          umask 077
+          trap 'rm -f "$RUNNER_TEMP/memuera.jks"' EXIT
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/memuera.jks"
+          dotnet publish src/mEmuera.App.Android -c Release -r "$RID" \
+            -p:RuntimeIdentifiers="$RID" \
+            -p:AndroidSdkDirectory="$ANDROID_HOME" -p:JavaSdkDirectory="$JAVA_HOME" \
+            -p:AndroidKeyStore=true -p:AndroidSigningKeyStore="$RUNNER_TEMP/memuera.jks" \
+            -p:AndroidSigningKeyAlias="$ANDROID_KEY_ALIAS" \
+            -p:AndroidSigningStorePass=env:ANDROID_KEYSTORE_PASSWORD \
+            -p:AndroidSigningKeyPass=env:ANDROID_KEY_PASSWORD
+      - name: Collect APK
+        run: |
+          mkdir -p artifacts/dist
+          cp "src/mEmuera.App.Android/bin/Release/net10.0-android/$RID/publish/com.metamiku.memuera-Signed.apk" \
+            "artifacts/dist/mEmuera-$VERSION-$RID$SUFFIX.apk"
+      - uses: actions/upload-artifact@v7
+        with:
+          path: artifacts/dist/*
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: [version, desktop, android]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: mEmuera-*
+          path: dist
+          merge-multiple: true
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.version.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(
+            "dist/mEmuera-$VERSION-win-x64.exe"
+            "dist/mEmuera-$VERSION-linux-x64"
+            "dist/mEmuera-$VERSION-osx-arm64"
+            "dist/mEmuera-$VERSION-osx-x64"
+            "dist/mEmuera-$VERSION-android-arm64.apk"
+            "dist/mEmuera-$VERSION-android-x64.apk"
+          )
+          for file in "${files[@]}"; do test -s "$file"; done
+          gh release create "$TAG" "${files[@]}" --verify-tag --title "mEmuera $VERSION" --generate-notes

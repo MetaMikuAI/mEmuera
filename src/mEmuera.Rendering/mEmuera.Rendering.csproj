@@ -1,0 +1,1 @@
+<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="../mEmuera.Contracts/mEmuera.Contracts.csproj"/><ProjectReference Include="../mEmuera.Runtime/mEmuera.Runtime.csproj"/><PackageReference Include="SkiaSharp"/></ItemGroup></Project>

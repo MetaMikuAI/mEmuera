@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-android</TargetFramework>
+    <SupportedOSPlatformVersion>24</SupportedOSPlatformVersion>
+    <OutputType>Exe</OutputType>
+    <ApplicationId>com.metamiku.memuera</ApplicationId>
+    <ApplicationTitle>mEmuera</ApplicationTitle>
+    <ApplicationDisplayVersion>$(Version)</ApplicationDisplayVersion>
+    <!-- Android 内部序号由主版本×1000000＋次版本×1000＋修订号生成，次版本和修订号须小于 1000。 -->
+    <ApplicationVersion>$([MSBuild]::Add($([MSBuild]::Add($([MSBuild]::Multiply($([System.Version]::Parse('$(Version)').Major), 1000000)), $([MSBuild]::Multiply($([System.Version]::Parse('$(Version)').Minor), 1000)))), $([System.Version]::Parse('$(Version)').Build)))</ApplicationVersion>
+    <RuntimeIdentifiers>android-arm64</RuntimeIdentifiers>
+    <AndroidPackageFormat>apk</AndroidPackageFormat>
+    <!-- 不裁剪：存档、编译缓存都用基于反射的 System.Text.Json，裁剪会删掉框架里只靠反射调用的成员
+         （如 ImmutableDictionary.CreateRange），运行到 SAVEGLOBAL 时报 SerializationNotSupportedType。 -->
+    <PublishTrimmed>false</PublishTrimmed>
+    <!-- AOT 要求裁剪；默认的 profiled AOT 只覆盖框架启动路径，引擎代码本来就走 JIT。 -->
+    <RunAOTCompilation>false</RunAOTCompilation>
+    <AndroidEnableProfiledAot>false</AndroidEnableProfiledAot>
+    <!-- EraTW 新游戏初始化会触发 Mono 并发 GC 的 SGen worker 原生崩溃，使用非并发回收。 -->
+    <AndroidEnableSGenConcurrent>false</AndroidEnableSGenConcurrent>
+    <!-- SDK 10.0.3xx 在 Release 下会补上宿主 RID（linux-x64），进而去恢复 .NET 10 已不发布的
+         Mono linux-x64 运行时包而构建失败。Android 只用 RuntimeIdentifiers。 -->
+    <UseDefaultPublishRuntimeIdentifier>false</UseDefaultPublishRuntimeIdentifier>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../mEmuera.Contracts/mEmuera.Contracts.csproj"/>
+    <ProjectReference Include="../mEmuera.Compiler/mEmuera.Compiler.csproj"/>
+    <ProjectReference Include="../mEmuera.Runtime/mEmuera.Runtime.csproj"/>
+    <ProjectReference Include="../mEmuera.EraCompat/mEmuera.EraCompat.csproj"/>
+    <ProjectReference Include="../mEmuera.Infrastructure/mEmuera.Infrastructure.csproj"/>
+    <ProjectReference Include="../mEmuera.Host/mEmuera.Host.csproj"/>
+    <ProjectReference Include="../mEmuera.Cells/mEmuera.Cells.csproj"/>
+    <PackageReference Include="SkiaSharp.Views"/>
+  </ItemGroup>
+</Project>

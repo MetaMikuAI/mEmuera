@@ -30,9 +30,12 @@ public sealed class GamePathResolver
         {
             current = Path.Combine(current, part);
             FileSystemInfo info = Directory.Exists(current) ? new DirectoryInfo(current) : new FileInfo(current);
-            if (info.LinkTarget is not null) throw new IOException("不接受链接路径: " + logical);
+            if ((info.Attributes & FileAttributes.ReparsePoint) != 0 && info.LinkTarget is not null)
+                throw new IOException("不接受链接路径: " + logical);
         }
-        if (new DirectoryInfo(root).LinkTarget is not null) throw new IOException("不接受链接根目录");
+        var rootInfo = new DirectoryInfo(root);
+        if ((rootInfo.Attributes & FileAttributes.ReparsePoint) != 0 && rootInfo.LinkTarget is not null)
+            throw new IOException("不接受链接根目录");
         return path;
     }
     public string Source(string logical) => Resolve(SourceRoot, logical);

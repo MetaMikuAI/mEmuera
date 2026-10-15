@@ -244,14 +244,14 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
             default: throw new ScriptException("TYPE", "表达式类型未知", span);
         }
     }
-    private void Reference(Variable variable)
+    private void Reference(Variable variable, bool read = false)
     {
         var specification = Resolve(variable.Name);
         int count = variable.Indices.Count;
         for (int i = 0; i < variable.Indices.Count; i++) Expression(Subscript(variable, variable.Indices[i], i));
         if (!variable.ExplicitIndices)
             while (count < specification.Shape.Length) { Emit(Op.Constant, value: new EraValue(0L)); count++; }
-        Emit(Op.Reference, variable.Name, count, new(variable.ExplicitIndices ? 1L : 0L));
+        Emit(read ? Op.ReadVariable : Op.Reference, variable.Name, count, new(variable.ExplicitIndices ? 1L : 0L));
     }
     private void ArrayArgumentReference(Variable variable)
     {
@@ -285,7 +285,7 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
             case Variable { Name: "CHARANUM" }: Builtin("CHARANUM"); break;
             case Variable { Name: "RAND" } random: InvokeBuiltin("RAND", random.Indices); break;
             case Variable { Name: "DRAWLINESTR" }: Builtin("DRAWLINESTR"); break;
-            case Variable variable: Reference(variable); Emit(Op.Load); break;
+            case Variable variable: Reference(variable, read: true); break;
             case Unary unary: Expression(unary.Operand); Emit(Op.Unary, unary.Operator); break;
             case Binary binary when binary.Operator is "&&" or "||" or "!&" or "!|":
                 Expression(binary.Left); Emit(Op.Unary, "bool"); Emit(Op.Duplicate);

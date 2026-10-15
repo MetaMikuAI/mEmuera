@@ -48,7 +48,7 @@ public sealed partial class CompilationWorkspace(IGameSource source, IBuiltinReg
             var result = await BuildIndexAsync(options, progress, ct);
             string signatureFingerprint = System.Text.Json.JsonSerializer.Serialize(builtins.Signatures);
             result = result with { Index = result.Index with { Identity = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
-                System.Text.Encoding.UTF8.GetBytes(result.Index.Identity + "bytecode-v1" + signatureFingerprint))) } };
+                System.Text.Encoding.UTF8.GetBytes(result.Index.Identity + "bytecode-v2" + signatureFingerprint))) } };
             index = result.Index;
             dependencies = index.LoadedSources.Where(f => f.Path.EndsWith(".erh", StringComparison.OrdinalIgnoreCase))
                 .Concat(index.Options.PreparationSources).Concat(index.DeclarationSources.IsDefault ? [] : index.DeclarationSources).Distinct().ToArray();

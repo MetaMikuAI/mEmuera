@@ -24,12 +24,13 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
         public int Pc;
         public bool Entered;
         public CompiledFunction? Function;
-        public Dictionary<string, Cell> Locals = [];
+        public Dictionary<string, Cell> Locals = new(descriptor.Locals.Length);
         public Dictionary<string, SlotReference> Aliases = [];
     }
     private readonly GameDefinition game;
     private readonly Func<long> clock;
     private readonly BuiltinLibrary builtins;
+    private readonly Dictionary<string, BuiltinSignature> builtinSignatures = new(StringComparer.Ordinal);
     private readonly IScriptExtensions? extensions;
     private readonly Dictionary<string, Cell> globals = [];
     private readonly Dictionary<string, Dictionary<string, string>> stringMaps = new(StringComparer.Ordinal);
@@ -51,7 +52,7 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
     public int CachedFunctionCount => compiled.Count;
     private readonly DocumentBuilder document = new();
     private readonly List<Diagnostic> diagnostics = [];
-    private readonly List<ExecutionEvent> trace = [];
+    private readonly Queue<ExecutionEvent> trace = new(1024);
     private InputRequest? input;
     private string hoveredButton = "";
     bool IBuiltinContext.SkipDisplay { get; set; }
@@ -74,6 +75,8 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
         Func<PresentationDocument, long, PointerMessage?>? pointerQuery = null)
     {
         this.game = game; this.builtins = builtins; this.clock = clock ?? (() => Environment.TickCount64);
+        foreach (var signature in builtins.Catalog.Signatures)
+            builtinSignatures.TryAdd(signature.ImplementationId, signature);
         document.DefaultFont = game.Index.Options.DefaultFont;
         nativeKeyState = keyState;
         this.inputActive = inputActive;
@@ -106,9 +109,17 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
         return cell;
     }
     private void Log(TraceKind kind, string detail, string? source = null, long? request = null)
-    { if (trace.Count == 1024) trace.RemoveAt(0); trace.Add(new(kind, epoch, instructions, detail, currentSpan, source, request, document.Snapshot().Revision)); }
+    { if (trace.Count == 1024) trace.Dequeue(); trace.Enqueue(new(kind, epoch, instructions, detail, currentSpan, source, request, document.Snapshot().Revision)); }
     public ImmutableArray<ExecutionEvent> Trace => trace.ToImmutableArray();
-    void IBuiltinContext.DebugClear() => trace.RemoveAll(e => e.Kind == TraceKind.Debug);
+    void IBuiltinContext.DebugClear()
+    {
+        int count = trace.Count;
+        for (int i = 0; i < count; i++)
+        {
+            var entry = trace.Dequeue();
+            if (entry.Kind != TraceKind.Debug) trace.Enqueue(entry);
+        }
+    }
     private void Push(FunctionDescriptor descriptor, Operand[] args, int mode)
     {
         if (frames.Count >= 4096) throw new ScriptException("STACK_LIMIT", "调用深度超过限制");
@@ -510,7 +521,7 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
             case Op.Builtin:
             {
                 if (!builtins.Handlers.TryGetValue(instruction.Text, out var handler)) throw new ScriptException("BUILTIN_MISSING", "缺少内建处理器");
-                var signature = builtins.Catalog.Signatures.First(s => s.ImplementationId == instruction.Text);
+                var signature = builtinSignatures[instruction.Text];
                 if (instruction.Number < signature.Parameters.Length || instruction.Number > signature.Parameters.Length && signature.Variadic is null) throw new ScriptException("BYTECODE", "内建参数数目错误");
                 var values = new BuiltinArgument[instruction.Number];
                 for (int i = values.Length - 1; i >= 0; i--)
@@ -523,7 +534,7 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
                     if (parameter.Kind is { } kind && value.Kind != kind) throw new ScriptException("TYPE", "内建参数类型错误");
                 }
                 int depth = frames.Count;
-                var result = handler.Execute(this, values.ToImmutableArray());
+                var result = handler.Execute(this, System.Runtime.InteropServices.ImmutableCollectionsMarshal.AsImmutableArray(values));
                 if (signature.ReturnType is { } returnType)
                 {
                     if (signature.NumericResult && values.Any(a => a.Value.Kind == ValueKind.Float)) returnType = ValueKind.Float;

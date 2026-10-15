@@ -226,7 +226,7 @@ static async Task<int> MainAsync(string[] args)
             {
                 measurement = "headless reply to next pause; excludes terminal drawing", samples = ordered.Length,
                 p50Ms = Percentile(.5), p95Ms = Percentile(.95), totalMs = watch.Elapsed.TotalMilliseconds,
-                interactionAllocatedBytes,
+                interactionAllocatedBytes, interactionMilliseconds = latencies,
                 peakRssBytes = System.Diagnostics.Process.GetCurrentProcess().PeakWorkingSet64, workspace.CacheHits, workspace.CacheMisses,
                 workspace.SourceCacheHits, workspace.CachedSources, workspace.CompileMilliseconds, workspace.EstimatedCacheBytes,
                 source.ReadBytes, source.ReadFiles, indexed.Index.Identity, final.Mode, characterCount = final.Characters.Length,

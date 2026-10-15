@@ -129,10 +129,12 @@ public static class Preprocessor
     {
         var branches = new Stack<Branch>();
         var continuation = new StringBuilder(); LogicalLine? first = null;
+        var origins = new List<SourceSpan>();
         foreach (var physical in LogicalLines.Physical(source))
         {
             ct.ThrowIfCancellationRequested();
-            var line = physical with { Text = LogicalLines.StripStatementComment(physical.Text) };
+            string stripped = LogicalLines.StripStatementComment(physical.Text);
+            var line = ReferenceEquals(stripped, physical.Text) ? physical : physical with { Text = stripped };
             string value = line.Text;
             if (value.Length == 0) continue;
             bool active = branches.Count == 0 || branches.Peek().Active;
@@ -180,12 +182,12 @@ public static class Preprocessor
             else if (first is not null) { continuation.Append(value).Append(' '); continue; }
             string command = LogicalLines.HeadName(value);
             if (command == "#DEFINE") { if (define) macros.Define(LogicalLines.Head(value).Tail, line.Span); continue; }
-            var origins = new List<SourceSpan>();
+            origins.Clear();
             // 原始输出文本不按标识符展开；格式串表达式由编译器处理。
             if (!command.StartsWith("PRINT", StringComparison.Ordinal) && !command.StartsWith("DEBUGPRINT", StringComparison.Ordinal)
                 && command is not ("DATA" or "DATAFORM" or "REUSELASTLINE" or "THROW" or "PUTFORM" or "DRAWLINEFORM" or "STRLENFORM" or "STRLENFORMU"))
                 value = macros.Expand(value, line.Span, origins);
-            yield return new(line with { Text = value }, new(line.Span, origins.ToImmutableArray()));
+            yield return new(ReferenceEquals(value, line.Text) ? line : line with { Text = value }, new(line.Span, origins.ToImmutableArray()));
         }
         if (first is not null) throw new ScriptException("CONTINUATION", "续行块未结束", first.Span);
         if (branches.Count != 0) throw new ScriptException("PREPROCESSOR", "预处理区域未结束", new(source.Id, source.Text.Length, 0, source.Text.Count(c => c == '\n') + 1));

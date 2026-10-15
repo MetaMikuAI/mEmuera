@@ -31,10 +31,10 @@ public sealed class MacroEnvironment
         if (!definitions.TryAdd(name, new(name, parameters, text[end..].Trim(), span)))
             throw new ScriptException("MACRO_DUPLICATE", "宏重复: " + name, span);
     }
-    public string Expand(string text, SourceSpan span, List<SourceSpan>? origins = null) => Expand(text, span, [], origins);
-    private string Expand(string text, SourceSpan span, HashSet<string> chain, List<SourceSpan>? origins)
+    public string Expand(string text, SourceSpan span, List<SourceSpan>? origins = null) => Expand(text, span, null, origins);
+    private string Expand(string text, SourceSpan span, HashSet<string>? chain, List<SourceSpan>? origins)
     {
-        if (chain.Count >= 64) throw new ScriptException("MACRO_LIMIT", "宏展开深度超限", span);
+        if (chain?.Count >= 64) throw new ScriptException("MACRO_LIMIT", "宏展开深度超限", span);
         StringBuilder? output = null;
         int copied = 0;
         var lookup = definitions.GetAlternateLookup<ReadOnlySpan<char>>();
@@ -50,6 +50,7 @@ public sealed class MacroEnvironment
             while (i < text.Length && (char.IsLetterOrDigit(text[i]) || text[i] == '_')) i++;
             if (!lookup.TryGetValue(text.AsSpan(start, i - start), out var macro)) continue;
             string name = text[start..i];
+            chain ??= [];
             if (!chain.Add(name.ToUpperInvariant())) throw new ScriptException("MACRO_CYCLE", "宏循环: " + name, span);
             origins?.Add(macro.Span);
             string replacement = macro.Replacement;
@@ -159,7 +160,7 @@ public static class Preprocessor
                 continue;
             }
             if (!active) continue;
-            string physicalCommand = LogicalLines.Head(value).Name;
+            string physicalCommand = LogicalLines.HeadName(value);
             if (!options.Debug && physicalCommand is "DEBUGPRINT" or "DEBUGPRINTL" or "DEBUGPRINTFORM" or "DEBUGPRINTFORML" or "DEBUGCLEAR")
             {
                 yield return new(line, new(line.Span, [])); continue;
@@ -177,8 +178,8 @@ public static class Preprocessor
                 first = null; continuation.Clear(); value = line.Text;
             }
             else if (first is not null) { continuation.Append(value).Append(' '); continue; }
-            var (command, tail) = LogicalLines.Head(value);
-            if (command == "#DEFINE") { if (define) macros.Define(tail, line.Span); continue; }
+            string command = LogicalLines.HeadName(value);
+            if (command == "#DEFINE") { if (define) macros.Define(LogicalLines.Head(value).Tail, line.Span); continue; }
             var origins = new List<SourceSpan>();
             // 原始输出文本不按标识符展开；格式串表达式由编译器处理。
             if (!command.StartsWith("PRINT", StringComparison.Ordinal) && !command.StartsWith("DEBUGPRINT", StringComparison.Ordinal)

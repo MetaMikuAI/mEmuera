@@ -51,9 +51,11 @@ public static class LogicalLines
         {
             int end = source.Text.IndexOf('\n', start);
             if (end < 0) end = source.Text.Length;
-            string text = source.Text[start..end].TrimEnd('\r');
-            int lead = text.Length - text.TrimStart().Length;
-            yield return new(text[lead..], new(source.Id, start + lead, text.Length - lead, line, lead + 1), end);
+            int length = end - start;
+            while (length > 0 && source.Text[start + length - 1] == '\r') length--;
+            int lead = 0;
+            while (lead < length && char.IsWhiteSpace(source.Text[start + lead])) lead++;
+            yield return new(source.Text.Substring(start + lead, length - lead), new(source.Id, start + lead, length - lead, line, lead + 1), end);
             start = end + 1;
             line++;
         }
@@ -71,10 +73,16 @@ public static class LogicalLines
         }
         return text;
     }
-    public static (string Name, string Tail) Head(string text)
+    private static int HeadLength(string text)
     {
         int i = 0;
         while (i < text.Length && !char.IsWhiteSpace(text[i]) && text[i] != '(' && text[i] != ',') i++;
+        return i;
+    }
+    public static string HeadName(string text) => text[..HeadLength(text)].ToUpperInvariant();
+    public static (string Name, string Tail) Head(string text)
+    {
+        int i = HeadLength(text);
         return (text[..i].ToUpperInvariant(), text[i..].Trim());
     }
     private static bool RawArgument(string name) => name is
@@ -95,7 +103,7 @@ public static class LogicalLines
     }
     public static string StripStatementComment(string text)
     {
-        string name = Head(text).Name;
+        string name = HeadName(text);
         if (RawArgument(name)) return text;
         if (!name.StartsWith("PRINTV", StringComparison.Ordinal)) return StripComment(text);
         bool quoted = false, escaped = false, raw = false;

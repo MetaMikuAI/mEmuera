@@ -445,7 +445,7 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
             if (text.Length == 0) continue;
             if (text[0] == '#')
             {
-                string attribute = LogicalLines.Head(text).Name;
+                string attribute = LogicalLines.HeadName(text);
                 if (attribute is not ("#DIM" or "#DIMS" or "#DIMF" or "#FUNCTION" or "#FUNCTIONS" or "#LOCALSIZE" or "#LOCALSSIZE" or "#LOCALFSIZE" or "#PRI" or "#LATER" or "#SINGLE" or "#ONLY"))
                     diagnostics.Add(new("UNSUPPORTED_ATTRIBUTE", "尚未实现声明或属性", span));
                 continue;
@@ -472,7 +472,7 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
     }
     private void Statement(string text)
     {
-        string command = LogicalLines.Head(text).Name;
+        string command = LogicalLines.HeadName(text);
         bool output = KnownIdentifiers.Commands.Contains(command) && command.StartsWith("PRINT", StringComparison.Ordinal) && command is not ("PRINTCLENGTH" or "PRINTCPERLINE")
             || command is "DRAWLINE" or "DRAWLINEFORM" or "CUSTOMDRAWLINE" or "HTML_PRINT" or "HTML_PRINTC" or "HTML_PRINTLC" or "REUSELASTLINE" or "WAIT" or "TWAIT" or "FORCEWAIT";
         if (dataCommand is not null) output = command == "ENDDATA" && dataCommand.StartsWith("PRINTDATA", StringComparison.Ordinal);

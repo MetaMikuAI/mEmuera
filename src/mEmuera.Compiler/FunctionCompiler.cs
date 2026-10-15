@@ -453,15 +453,15 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
             Emit(Op.Binary, "+");
         }
     }
-    public CompileResult Compile(ImmutableArray<ExpandedLine> lines, CancellationToken ct)
+    public CompileResult Compile(IReadOnlyList<ExpandedLine> lines, CancellationToken ct)
     {
         var diagnostics = ImmutableArray.CreateBuilder<Diagnostic>();
         foreach (var attribute in descriptor.Attributes.Where(a => a is not ("#FUNCTION" or "#FUNCTIONS" or "#PRI" or "#LATER" or "#SINGLE" or "#ONLY")))
             diagnostics.Add(new("UNSUPPORTED_ATTRIBUTE", "尚未实现函数属性: " + attribute, descriptor.Span));
-        int low = 0, high = lines.Length;
+        int low = 0, high = lines.Count;
         while (low < high)
         { int middle = low + (high - low) / 2; if (lines[middle].Line.Span.Start < descriptor.BodyStart) low = middle + 1; else high = middle; }
-        for (int lineIndex = low; lineIndex < lines.Length && lines[lineIndex].Line.Span.Start < descriptor.BodyEnd; lineIndex++)
+        for (int lineIndex = low; lineIndex < lines.Count && lines[lineIndex].Line.Span.Start < descriptor.BodyEnd; lineIndex++)
         {
             ct.ThrowIfCancellationRequested(); var expanded = lines[lineIndex];
             var line = expanded.Line;

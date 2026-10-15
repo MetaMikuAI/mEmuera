@@ -129,11 +129,6 @@ internal sealed class GamePage : IAsyncDisposable
     /// <summary>菜单里切换了性能小窗；勾选状态由 <see cref="PerfVisible"/> 提供。</summary>
     public event Action? PerfToggled;
     public bool PerfVisible { get; set; }
-    public event Action<double>? FramePainted
-    {
-        add => terminal.FramePainted += value;
-        remove => terminal.FramePainted -= value;
-    }
 
     public void ConfirmExit()
     {

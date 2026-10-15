@@ -9,6 +9,7 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
 {
     private sealed class Cell(EraValue[]? values, ValueKind kind, VariableDescriptor? descriptor = null)
     {
+        private EraValue first = values is null ? EraValue.Zero(kind) : default;
         public ValueKind Kind { get; } = kind;
         public VariableDescriptor? Descriptor { get; } = descriptor;
         // 数组声明长度不变；逐项访问按需分配，整数组操作才展开完整存储。
@@ -17,13 +18,18 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
         {
             if (Descriptor?.Scope == VariableScope.FunctionStatic) return;
             if (Descriptor is null) Array.Fill(values!, EraValue.Zero(Kind));
-            else values = null;
+            else { values = null; first = EraValue.Zero(Kind); }
         }
         public EraValue[] Values
         {
             get
             {
-                if (values is null) values = CreateValues(Descriptor!);
+                if (values is null)
+                {
+                    values = CreateValues(Descriptor!);
+                    if (values.Length > 0 && Descriptor!.Initial.IsDefaultOrEmpty) values[0] = first;
+                    first = default;
+                }
                 else if (values.Length < Length) Grow(Length);
                 return values;
             }
@@ -32,12 +38,14 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
         {
             if ((uint)index >= (uint)Length) throw new IndexOutOfRangeException();
             if (values is null && Descriptor is { Initial.IsDefaultOrEmpty: false }) return Values[index];
-            return values is not null && index < values.Length ? values[index] : EraValue.Zero(Kind);
+            return values is not null && index < values.Length ? values[index]
+                : values is null && index == 0 ? first : EraValue.Zero(Kind);
         }
         public void Write(int index, EraValue value)
         {
             if ((uint)index >= (uint)Length) throw new IndexOutOfRangeException();
             if (values is null && Descriptor is { Initial.IsDefaultOrEmpty: false }) _ = Values;
+            if (values is null && index == 0) { first = value; return; }
             if (values is null || index >= values.Length) Grow(Math.Min(Length, Math.Max(index + 1, Math.Max(8, (values?.Length ?? 0) * 2))));
             values![index] = value;
         }
@@ -46,6 +54,7 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
             int previous = values?.Length ?? 0;
             Array.Resize(ref values, length);
             Array.Fill(values!, EraValue.Zero(Kind), previous, length - previous);
+            if (previous == 0 && length > 0) { values![0] = first; first = default; }
         }
     }
     private readonly record struct Operand(EraValue Value, SlotReference? Reference = null, bool IsOmitted = false);

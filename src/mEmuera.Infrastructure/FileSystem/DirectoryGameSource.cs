@@ -29,9 +29,13 @@ public sealed class GamePathResolver
         foreach (string part in logical.Split('/', StringSplitOptions.RemoveEmptyEntries))
         {
             current = Path.Combine(current, part);
-            FileSystemInfo info = Directory.Exists(current) ? new DirectoryInfo(current) : new FileInfo(current);
-            if ((info.Attributes & FileAttributes.ReparsePoint) != 0 && info.LinkTarget is not null)
-                throw new IOException("不接受链接路径: " + logical);
+            FileSystemInfo info = new FileInfo(current);
+            FileAttributes attributes = info.Attributes;
+            if ((attributes & FileAttributes.ReparsePoint) != 0)
+            {
+                if ((attributes & FileAttributes.Directory) != 0) info = new DirectoryInfo(current);
+                if (info.LinkTarget is not null) throw new IOException("不接受链接路径: " + logical);
+            }
         }
         var rootInfo = new DirectoryInfo(root);
         if ((rootInfo.Attributes & FileAttributes.ReparsePoint) != 0 && rootInfo.LinkTarget is not null)

@@ -143,6 +143,10 @@ static async Task<int> MainAsync(string[] args)
         int next = 0, steps = 0; long? interactionStart = null; var latencies = new List<double>();
         long allocationStart = 0;
         var interactionAllocatedBytes = new List<long>();
+        var interactionCompilations = new List<long>();
+        var interactionCompileMilliseconds = new List<double>();
+        long compilationStart = 0;
+        double compileTimeStart = 0;
         long progressAt = 0;
         var compilationRequests = args.Contains("--profile-compilation") ? new Dictionary<string, int>() : null;
         int maxSteps = int.Parse(Option("--max-steps") ?? "1000000", System.Globalization.CultureInfo.InvariantCulture);
@@ -166,6 +170,8 @@ static async Task<int> MainAsync(string[] args)
             {
                 latencies.Add(System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds);
                 interactionAllocatedBytes.Add(GC.GetTotalAllocatedBytes(false) - allocationStart);
+                interactionCompilations.Add(workspace.CacheMisses - compilationStart);
+                interactionCompileMilliseconds.Add(workspace.CompileMilliseconds - compileTimeStart);
                 interactionStart = null;
             }
             if (result.Reason != StopReason.WaitingInput) break;
@@ -199,6 +205,8 @@ static async Task<int> MainAsync(string[] args)
             action.Expect?.Check(snapshot);
             interactionStart = System.Diagnostics.Stopwatch.GetTimestamp();
             allocationStart = GC.GetTotalAllocatedBytes(false);
+            compilationStart = workspace.CacheMisses;
+            compileTimeStart = workspace.CompileMilliseconds;
             if (action.ExpectVariable is { } variable && snapshot.Variables[variable][0].ToString() != action.ExpectValue) throw new ScriptException("REPLAY_ASSERT", "变量断言失败: " + variable);
             if (action.Stop) break;
             if (action.Advance is { } delta) { now += delta; session.Apply(new TimeoutMessage(now)); continue; }
@@ -234,6 +242,7 @@ static async Task<int> MainAsync(string[] args)
                 measurement = "headless reply to next pause; excludes terminal drawing", samples = ordered.Length,
                 p50Ms = Percentile(.5), p95Ms = Percentile(.95), totalMs = watch.Elapsed.TotalMilliseconds,
                 interactionAllocatedBytes, interactionMilliseconds = latencies,
+                interactionCompilations, interactionCompileMilliseconds,
                 peakRssBytes = System.Diagnostics.Process.GetCurrentProcess().PeakWorkingSet64, workspace.CacheHits, workspace.CacheMisses,
                 workspace.SourceCacheHits, workspace.CachedSources, workspace.CompileMilliseconds, workspace.EstimatedCacheBytes,
                 source.ReadBytes, source.ReadFiles, indexed.Index.Identity, final.Mode, characterCount = final.Characters.Length,

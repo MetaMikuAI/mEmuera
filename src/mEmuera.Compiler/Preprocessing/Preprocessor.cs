@@ -35,19 +35,21 @@ public sealed class MacroEnvironment
     private string Expand(string text, SourceSpan span, HashSet<string> chain, List<SourceSpan>? origins)
     {
         if (chain.Count >= 64) throw new ScriptException("MACRO_LIMIT", "宏展开深度超限", span);
-        var output = new StringBuilder();
+        StringBuilder? output = null;
+        int copied = 0;
+        var lookup = definitions.GetAlternateLookup<ReadOnlySpan<char>>();
         bool quoted = false, escaped = false;
         for (int i = 0; i < text.Length;)
         {
             char c = text[i];
-            if (escaped) { output.Append(c); escaped = false; i++; continue; }
-            if (quoted && c == '\\') { output.Append(c); escaped = true; i++; continue; }
-            if (c == '"') { quoted = !quoted; output.Append(c); i++; continue; }
-            if (quoted || !(char.IsLetter(c) || c == '_')) { output.Append(c); i++; continue; }
+            if (escaped) { escaped = false; i++; continue; }
+            if (quoted && c == '\\') { escaped = true; i++; continue; }
+            if (c == '"') { quoted = !quoted; i++; continue; }
+            if (quoted || !(char.IsLetter(c) || c == '_')) { i++; continue; }
             int start = i++;
             while (i < text.Length && (char.IsLetterOrDigit(text[i]) || text[i] == '_')) i++;
+            if (!lookup.TryGetValue(text.AsSpan(start, i - start), out var macro)) continue;
             string name = text[start..i];
-            if (!definitions.TryGetValue(name, out var macro)) { output.Append(name); continue; }
             if (!chain.Add(name.ToUpperInvariant())) throw new ScriptException("MACRO_CYCLE", "宏循环: " + name, span);
             origins?.Add(macro.Span);
             string replacement = macro.Replacement;
@@ -70,11 +72,15 @@ public sealed class MacroEnvironment
                 var arguments = macro.Parameters.Zip(values).ToDictionary(p => p.First, p => p.Second, StringComparer.OrdinalIgnoreCase);
                 replacement = Substitute(replacement, arguments);
             }
+            output ??= new StringBuilder();
+            output.Append(text.AsSpan(copied, start - copied));
             output.Append(Expand(replacement, span, chain, origins));
+            copied = i;
             chain.Remove(name.ToUpperInvariant());
             if (output.Length > 1_000_000) throw new ScriptException("MACRO_LIMIT", "宏展开长度超限", span);
         }
-        return output.ToString();
+        if (output is null) return text;
+        return output.Append(text.AsSpan(copied)).ToString();
     }
     private static string Substitute(string text, IReadOnlyDictionary<string, string> arguments)
     {
@@ -101,6 +107,7 @@ public static class Preprocessor
 {
     public static string CharacterTokens(string text, CompileOptions options, SourceSpan span)
     {
+        if (!text.Contains("[[", StringComparison.Ordinal)) return text;
         var output = new StringBuilder();
         for (int i = 0; i < text.Length; i++)
         {

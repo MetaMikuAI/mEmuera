@@ -7,7 +7,7 @@ using mEmuera.Contracts;
 
 namespace mEmuera.Compiler;
 
-public sealed class CompilationWorkspace(IGameSource source, IBuiltinRegistry builtins, Action<Requirement>? requirementSink = null) : IGameCompiler, ICompilationService, IDisposable
+public sealed partial class CompilationWorkspace(IGameSource source, IBuiltinRegistry builtins, Action<Requirement>? requirementSink = null, string? cacheDirectory = null, string? cacheVersion = null) : IGameCompiler, ICompilationService, IDisposable
 {
     private ProgramIndex? index;
     private SourceId[] dependencies = [];
@@ -30,6 +30,7 @@ public sealed class CompilationWorkspace(IGameSource source, IBuiltinRegistry bu
     }
     public long CacheHits { get; private set; }
     public long CacheMisses { get; private set; }
+    public bool IndexCacheHit { get; private set; }
     public double CompileMilliseconds { get; private set; }
     public long EstimatedCacheBytes => cache.Values.Sum(f => f.Code.Sum(i => 96L + i.Text.Length * 2L + (i.Value.Text?.Length ?? 0) * 2L))
         + texts.Values.Sum(t => t.Text.Length * 2L) + expandedTexts.Values.Sum(lines => lines.Sum(l => 96L + l.Line.Text.Length * 2L));
@@ -44,7 +45,7 @@ public sealed class CompilationWorkspace(IGameSource source, IBuiltinRegistry bu
         try
         {
             ObjectDisposedException.ThrowIf(disposed, this);
-            var result = await ProgramIndexer.BuildAsync(source, options, ct, requirementSink, builtins, progress);
+            var result = await BuildIndexAsync(options, progress, ct);
             string signatureFingerprint = System.Text.Json.JsonSerializer.Serialize(builtins.Signatures);
             result = result with { Index = result.Index with { Identity = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
                 System.Text.Encoding.UTF8.GetBytes(result.Index.Identity + "bytecode-v1" + signatureFingerprint))) } };
@@ -82,8 +83,9 @@ public sealed class CompilationWorkspace(IGameSource source, IBuiltinRegistry bu
             if (index?.Identity != program.Identity) return new(null, [new("WORKSPACE", "索引不属于此工作区")]);
             var descriptor = program.ByFunctionId.GetValueOrDefault(functionId);
             if (descriptor is null) return new(null, [new("FUNCTION", "函数不存在")]);
+            // 已编译函数在本次会话内复用；脚本修改在重新进入游戏后生效。
+            if (cache.TryGetValue(functionId, out var hit)) { CacheHits++; return new(hit, []); }
             await source.ValidateAsync(dependencies, ct);
-            // 即使命中编译缓存，也验证源摘要，避免继续执行失效索引。
             await source.ValidateAsync(descriptor.Span.Source, ct);
             if (!texts.TryGetValue(descriptor.Span.Source, out var text))
             {
@@ -93,7 +95,6 @@ public sealed class CompilationWorkspace(IGameSource source, IBuiltinRegistry bu
                 texts.Add(text.Id, text); textOrder.Enqueue(text.Id);
             }
             else SourceCacheHits++;
-            if (cache.TryGetValue(functionId, out var hit)) { CacheHits++; return new(hit, []); }
             CacheMisses++;
             long started = System.Diagnostics.Stopwatch.GetTimestamp();
             if (!expandedTexts.TryGetValue(text.Id, out var expanded))

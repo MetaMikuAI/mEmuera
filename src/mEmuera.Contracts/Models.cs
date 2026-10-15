@@ -60,15 +60,28 @@ public sealed record VariableDescriptor(string Id, string Name, ValueKind Kind, 
     public ImmutableDictionary<int, ImmutableDictionary<string, int>> DimensionNames { get; init; } = ImmutableDictionary<int, ImmutableDictionary<string, int>>.Empty;
     public ImmutableDictionary<string, int> NamesAt(int dimension) => DimensionNames.GetValueOrDefault(dimension) ?? NameIndices;
     public ImmutableArray<int> Shape => Dimensions.IsDefaultOrEmpty ? [Length] : Dimensions;
+    public int Rank => Dimensions.IsDefaultOrEmpty ? 1 : Dimensions.Length;
     public int Offset(IReadOnlyList<long> indices)
     {
-        var shape = Shape;
-        if (indices.Count != shape.Length) throw new ScriptException("RANK", "数组下标维数不匹配: " + Name);
+        if (indices.Count != Rank) throw new ScriptException("RANK", "数组下标维数不匹配: " + Name);
         long offset = 0;
         for (int i = 0; i < indices.Count; i++)
         {
-            if (indices[i] < 0 || indices[i] >= shape[i]) throw new ScriptException("BOUNDS", "数组下标越界: " + Name);
-            offset = checked(offset * shape[i] + indices[i]);
+            int width = Dimensions.IsDefaultOrEmpty ? Length : Dimensions[i];
+            if (indices[i] < 0 || indices[i] >= width) throw new ScriptException("BOUNDS", "数组下标越界: " + Name);
+            offset = checked(offset * width + indices[i]);
+        }
+        return checked((int)offset);
+    }
+    public int OffsetSpan(ReadOnlySpan<long> indices)
+    {
+        if (indices.Length != Rank) throw new ScriptException("RANK", "数组下标维数不匹配: " + Name);
+        long offset = 0;
+        for (int i = 0; i < indices.Length; i++)
+        {
+            int width = Dimensions.IsDefaultOrEmpty ? Length : Dimensions[i];
+            if (indices[i] < 0 || indices[i] >= width) throw new ScriptException("BOUNDS", "数组下标越界: " + Name);
+            offset = checked(offset * width + indices[i]);
         }
         return checked((int)offset);
     }

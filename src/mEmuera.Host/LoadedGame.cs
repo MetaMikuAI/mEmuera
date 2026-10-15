@@ -67,7 +67,9 @@ public sealed class LoadedGame : IDisposable
         var paths = new GamePathResolver(options.GamePath, options.DataRoot, options.AllowSharedRoot);
         var source = new DirectoryGameSource(options.GamePath, options.Encoding, scriptSnapshot: options.Profile != "minimal-v1",
             excludeRuntimeDirectories: options.AllowSharedRoot);
-        var workspace = new CompilationWorkspace(source, EraBuiltins.Library.Catalog);
+        var workspace = new CompilationWorkspace(source, EraBuiltins.Library.Catalog,
+            cacheDirectory: paths.Data("cache/index"),
+            cacheVersion: $"{typeof(LoadedGame).Module.ModuleVersionId}:{typeof(EraBuiltins).Module.ModuleVersionId}:{typeof(DirectoryGameSource).Module.ModuleVersionId}");
         try
         {
             progress?.Invoke(LoadStage.ReadingFiles);

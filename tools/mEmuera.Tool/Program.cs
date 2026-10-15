@@ -24,6 +24,22 @@ static async Task<int> MainAsync(string[] args)
         if (args[0] == "media-probe") return await MediaProbe.RunAsync(Option("--output") ?? "artifacts/media-probe", Option("--audio-player") ?? "ffplay");
         if (args[0] == "scale-probe") return await ScaleProbe.RunAsync(Option("--report") ?? "artifacts/scale.json");
         string gamePath = Option("--game") ?? throw new ArgumentException("需要 --game");
+        if (args[0] == "load")
+        {
+            var timer = System.Diagnostics.Stopwatch.StartNew();
+            using var loaded = await LoadedGame.LoadAsync(new(gamePath, Option("--data-dir") ?? "artifacts/load-data"),
+                step => Console.WriteLine($"{step}: {timer.ElapsedMilliseconds} ms"), ct);
+            Console.WriteLine($"loadedMs={timer.ElapsedMilliseconds} indexCacheHit={loaded.Workspace.IndexCacheHit} readBytes={loaded.Source.ReadBytes} functions={loaded.Index.Functions.Length} managedBytes={GC.GetTotalMemory(false)}");
+            if (Option("--entry") is { } requestedEntry)
+            {
+                var function = loaded.Index.Find(requestedEntry) ?? throw new ArgumentException("入口不存在");
+                var compiled = await loaded.Workspace.CompileAsync(loaded.Index, function.Id, ct);
+                foreach (var diagnostic in compiled.Diagnostics) Print(diagnostic);
+                Console.WriteLine($"entryCompiled={compiled.Success}");
+                return compiled.Success ? 0 : 3;
+            }
+            return 0;
+        }
         if (args[0] == "render") return await RenderCommand.RunAsync(gamePath, Option("--data-dir") ?? "artifacts/render-data", Option("--out") ?? "artifacts/render.png", (Option("--script") ?? "").Length == 0 ? [] : Option("--script")!.Split(','), args.Contains("--dump"), int.Parse(Option("--menu-height") ?? "0"));
         if (args[0] == "cells") return await CellsCommand.RunAsync(gamePath, Option("--data-dir") ?? "artifacts/render-data", Option("--out") ?? "artifacts/cells.png", (Option("--script") ?? "").Length == 0 ? [] : Option("--script")!.Split(','),
             int.Parse(Option("--columns") ?? "120"), int.Parse(Option("--rows") ?? "40"), float.Parse(Option("--font-size") ?? "16", System.Globalization.CultureInfo.InvariantCulture));
@@ -124,6 +140,8 @@ static async Task<int> MainAsync(string[] args)
         }
         using var checkpoints = Option("--checkpoints") is { } checkpointPath ? new StreamWriter(checkpointPath, false) { AutoFlush = true } : null;
         int next = 0, steps = 0; long? interactionStart = null; var latencies = new List<double>();
+        long allocationStart = 0;
+        var interactionAllocatedBytes = new List<long>();
         long progressAt = 0;
         int maxSteps = int.Parse(Option("--max-steps") ?? "1000000", System.Globalization.CultureInfo.InvariantCulture);
         while (++steps < maxSteps)
@@ -138,7 +156,11 @@ static async Task<int> MainAsync(string[] args)
             if (result.Service is { } service) { session.Apply(await dispatcher.ExecuteAsync(service, ct)); continue; }
             if (result.Reason == StopReason.Yielded) continue;
             if (interactionStart is { } started)
-            { latencies.Add(System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds); interactionStart = null; }
+            {
+                latencies.Add(System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+                interactionAllocatedBytes.Add(GC.GetTotalAllocatedBytes(false) - allocationStart);
+                interactionStart = null;
+            }
             if (result.Reason != StopReason.WaitingInput) break;
             if (checkpoints is not null)
             {
@@ -169,6 +191,7 @@ static async Task<int> MainAsync(string[] args)
             var snapshot = session.InspectSelected((action.Expect?.Selection ?? []).Concat(action.ExpectVariable is { } name ? [new StateSelection(name)] : []));
             action.Expect?.Check(snapshot);
             interactionStart = System.Diagnostics.Stopwatch.GetTimestamp();
+            allocationStart = GC.GetTotalAllocatedBytes(false);
             if (action.ExpectVariable is { } variable && snapshot.Variables[variable][0].ToString() != action.ExpectValue) throw new ScriptException("REPLAY_ASSERT", "变量断言失败: " + variable);
             if (action.Stop) break;
             if (action.Advance is { } delta) { now += delta; session.Apply(new TimeoutMessage(now)); continue; }
@@ -203,6 +226,7 @@ static async Task<int> MainAsync(string[] args)
             {
                 measurement = "headless reply to next pause; excludes terminal drawing", samples = ordered.Length,
                 p50Ms = Percentile(.5), p95Ms = Percentile(.95), totalMs = watch.Elapsed.TotalMilliseconds,
+                interactionAllocatedBytes,
                 peakRssBytes = System.Diagnostics.Process.GetCurrentProcess().PeakWorkingSet64, workspace.CacheHits, workspace.CacheMisses,
                 workspace.SourceCacheHits, workspace.CachedSources, workspace.CompileMilliseconds, workspace.EstimatedCacheBytes,
                 source.ReadBytes, source.ReadFiles, indexed.Index.Identity, final.Mode, characterCount = final.Characters.Length,

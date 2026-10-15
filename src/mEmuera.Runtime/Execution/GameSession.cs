@@ -7,7 +7,12 @@ namespace mEmuera.Runtime.Execution;
 
 public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowState
 {
-    private sealed record Cell(EraValue[] Values, ValueKind Kind, VariableDescriptor? Descriptor = null);
+    private sealed class Cell(EraValue[]? values, ValueKind kind, VariableDescriptor? descriptor = null)
+    {
+        public ValueKind Kind { get; } = kind;
+        public VariableDescriptor? Descriptor { get; } = descriptor;
+        public EraValue[] Values => values ??= CreateValues(Descriptor!);
+    }
     private readonly record struct Operand(EraValue Value, SlotReference? Reference = null, bool IsOmitted = false);
     private sealed class Frame(FunctionDescriptor descriptor, long id, int mode, int stackBase)
     {
@@ -86,15 +91,16 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
         foreach (var variable in game.Index.Variables.Where(v => v.Scope is not (VariableScope.Character or VariableScope.CallLocal))) globals.Add(variable.Name, CreateCell(variable));
         Push(game.Index.Find(game.Entry) ?? throw new ScriptException("ENTRY", "入口不存在: " + game.Entry), [], 0);
     }
-    private static Cell CreateCell(VariableDescriptor v)
+    private static EraValue[] CreateValues(VariableDescriptor v)
     {
         var values = Enumerable.Repeat(EraValue.Zero(v.Kind), v.Length).ToArray();
         if (!v.Initial.IsDefaultOrEmpty) v.Initial.CopyTo(values);
-        return new(values, v.Kind, v);
+        return values;
     }
+    private static Cell CreateCell(VariableDescriptor v) => new(CreateValues(v), v.Kind, v);
     private Cell LocalCell(FunctionDescriptor function, VariableDescriptor variable)
     {
-        if (variable.Scope != VariableScope.FunctionStatic) return CreateCell(variable);
+        if (variable.Scope != VariableScope.FunctionStatic) return new(null, variable.Kind, variable);
         if (!statics.TryGetValue(function.Id, out var cells)) statics.Add(function.Id, cells = []);
         if (!cells.TryGetValue(variable.Name, out var cell)) cells.Add(variable.Name, cell = CreateCell(variable));
         return cell;
@@ -190,7 +196,10 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
         else if (reference.FrameId == 0) target = globals[reference.VariableId];
         else
         {
-            var frame = frames.FirstOrDefault(f => f.Id == reference.FrameId) ?? throw new ScriptException("STALE_REFERENCE", "引用调用帧已释放");
+            Frame? frame = null;
+            for (int i = frames.Count - 1; i >= 0; i--)
+                if (frames[i].Id == reference.FrameId) { frame = frames[i]; break; }
+            if (frame is null) throw new ScriptException("STALE_REFERENCE", "引用调用帧已释放");
             target = frame.Locals[reference.VariableId];
         }
         if (target.Descriptor?.Reference == true) throw new ScriptException("UNBOUND_REFERENCE", "引用变量尚未绑定: " + reference.VariableId);
@@ -383,13 +392,13 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
             target.Descriptor?.Scope == VariableScope.FunctionStatic ? frame.Descriptor.Id : null)
         { IsCharacterSelector = !local && target.Descriptor?.Scope == VariableScope.System && name is "MASTER" or "TARGET" or "ASSI" };
     }
-    private SlotReference Reference(Frame frame, string name, IReadOnlyList<long> indices, bool explicitIndices = true)
+    private SlotReference Reference(Frame frame, string name, ReadOnlySpan<long> indices, bool explicitIndices = true)
     {
         if (frame.Aliases.TryGetValue(name, out var alias))
         {
             var cell = CellFor(alias);
-            long index = alias.ArgumentRank == 0 ? indices.Count == 1 && indices[0] == 0 ? 0 : throw new ScriptException("RANK", "标量引用不接受数组下标")
-                : cell.Descriptor?.Offset(indices) ?? indices[0];
+            long index = alias.ArgumentRank == 0 ? indices.Length == 1 && indices[0] == 0 ? 0 : throw new ScriptException("RANK", "标量引用不接受数组下标")
+                : cell.Descriptor?.OffsetSpan(indices) ?? indices[0];
             long offset = checked(alias.Index + index);
             if (offset < 0 || offset >= cell.Values.Length) throw new ScriptException("BOUNDS", "引用下标越界");
             return alias with { Index = (int)offset, IsCharacterSelector = false };
@@ -397,14 +406,14 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
         bool local = frame.Locals.TryGetValue(name, out Cell? target);
         if (!local && game.Index.VariablesByName.GetValueOrDefault(name) is { Scope: VariableScope.Character } spec)
         {
-            bool explicitCharacter = spec.CharacterScalar ? explicitIndices : indices.Count == spec.Shape.Length + 1;
+            bool explicitCharacter = spec.CharacterScalar ? explicitIndices : indices.Length == spec.Rank + 1;
             long character = explicitCharacter ? indices[0] : globals["TARGET"].Values[0].AsInt();
-            long[] subscripts = spec.CharacterScalar ? [0] : explicitCharacter ? indices.Skip(1).ToArray() : indices.ToArray();
-            return new(name, spec.Offset(subscripts), 0, epoch, CharacterId: characters.IdAt(character));
+            ReadOnlySpan<long> subscripts = spec.CharacterScalar ? [0L] : explicitCharacter ? indices[1..] : indices;
+            return new(name, spec.OffsetSpan(subscripts), 0, epoch, CharacterId: characters.IdAt(character));
         }
         target ??= globals.GetValueOrDefault(name) ?? throw new ScriptException("VARIABLE", "变量不存在: " + name);
         if (target.Descriptor?.Reference == true) throw new ScriptException("UNBOUND_REFERENCE", "引用变量尚未绑定: " + name);
-        long offsetIndex = target.Descriptor?.Offset(indices) ?? indices[0];
+        long offsetIndex = target.Descriptor?.OffsetSpan(indices) ?? indices[0];
         if (offsetIndex < 0 || offsetIndex >= target.Values.Length) throw new ScriptException("BOUNDS", "数组下标越界: " + name);
         return new(name, (int)offsetIndex, local ? frame.Id : 0, epoch,
             target.Descriptor?.Scope == VariableScope.FunctionStatic ? frame.Descriptor.Id : null)
@@ -535,14 +544,15 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
             case Op.Throw: StartThrow(Value().AsString()); break;
             case Op.Reference:
             {
-                var indices = new long[Math.Max(1, instruction.Number)];
+                int indexCount = Math.Max(1, instruction.Number);
+                Span<long> indices = indexCount <= 4 ? stackalloc long[indexCount] : new long[indexCount];
                 for (int i = indices.Length - 1; i >= 0; i--) indices[i] = Value().AsInt();
                 var reference = (instruction.Value.Integer & 2) != 0
                     ? ArrayReference(frame, instruction.Text, (instruction.Value.Integer & 1) != 0 ? indices[0] : null)
                     : Reference(frame, instruction.Text, indices, instruction.Value.Integer != 0);
-                var specification = frame.Function!.Descriptor.Locals.FirstOrDefault(v => v.Name == instruction.Text)
+                var specification = frame.Locals.GetValueOrDefault(instruction.Text)?.Descriptor
                     ?? game.Index.VariablesByName.GetValueOrDefault(instruction.Text);
-                if (specification is not null) reference = reference with { ArgumentRank = specification.ReferenceRank ?? (specification.CharacterScalar ? 0 : specification.Shape.Length) };
+                if (specification is not null) reference = reference with { ArgumentRank = specification.ReferenceRank ?? (specification.CharacterScalar ? 0 : specification.Rank) };
                 stack.Add(new(Read(reference), reference)); break;
             }
             case Op.Load: Put(Value()); break;

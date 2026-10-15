@@ -101,7 +101,7 @@ public sealed record FunctionDescriptor(string Id, string Name, SourceSpan Span,
 public sealed record Requirement(string Name, string Category, SourceSpan Span, bool Supported, long Count = 1);
 public sealed record MacroDefinition(string Name, ImmutableArray<string> Parameters, string Replacement, SourceSpan Span);
 public sealed record IndexCoverage(int Files, int Structured, int Unknown, int Dynamic);
-public sealed record CompileOptions(string Profile = "minimal-v1", string Encoding = "utf-8", int CacheCapacity = 1024, int SourceCacheCapacity = 8,
+public sealed record CompileOptions(string Profile = "minimal-v1", string Encoding = "utf-8", int CacheCapacity = 4096, int SourceCacheCapacity = 8,
     bool Debug = false, bool SearchSubdirectories = true)
 {
     public ImmutableArray<VariableDescriptor> SystemVariables { get; init; } = [];

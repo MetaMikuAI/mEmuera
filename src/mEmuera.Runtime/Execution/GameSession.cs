@@ -11,7 +11,36 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
     {
         public ValueKind Kind { get; } = kind;
         public VariableDescriptor? Descriptor { get; } = descriptor;
-        public EraValue[] Values => values ??= CreateValues(Descriptor!);
+        // 数组声明长度不变；逐项访问按需分配，整数组操作才展开完整存储。
+        public int Length => Descriptor?.Length ?? values!.Length;
+        public EraValue[] Values
+        {
+            get
+            {
+                if (values is null) values = CreateValues(Descriptor!);
+                else if (values.Length < Length) Grow(Length);
+                return values;
+            }
+        }
+        public EraValue Read(int index)
+        {
+            if ((uint)index >= (uint)Length) throw new IndexOutOfRangeException();
+            if (values is null && Descriptor is { Initial.IsDefaultOrEmpty: false }) return Values[index];
+            return values is not null && index < values.Length ? values[index] : EraValue.Zero(Kind);
+        }
+        public void Write(int index, EraValue value)
+        {
+            if ((uint)index >= (uint)Length) throw new IndexOutOfRangeException();
+            if (values is null && Descriptor is { Initial.IsDefaultOrEmpty: false }) _ = Values;
+            if (values is null || index >= values.Length) Grow(Math.Min(Length, Math.Max(index + 1, Math.Max(8, (values?.Length ?? 0) * 2))));
+            values![index] = value;
+        }
+        private void Grow(int length)
+        {
+            int previous = values?.Length ?? 0;
+            Array.Resize(ref values, length);
+            Array.Fill(values!, EraValue.Zero(Kind), previous, length - previous);
+        }
     }
     private readonly record struct Operand(EraValue Value, SlotReference? Reference = null, bool IsOmitted = false);
     private sealed class Frame(FunctionDescriptor descriptor, long id, int mode, int stackBase)
@@ -164,8 +193,8 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
                 if (parameter.GlobalTarget) { Write(new(parameter.Name, parameter.TargetIndex, 0, epoch), argument.Value); continue; }
                 if (!frame.Locals.TryGetValue(parameter.Name, out Cell? cell)) frame.Locals[parameter.Name] = cell = new(
                     Enumerable.Repeat(EraValue.Zero(parameter.Kind), parameter.TargetIndex + 1).ToArray(), parameter.Kind);
-                if (parameter.TargetIndex < 0 || parameter.TargetIndex >= cell.Values.Length) throw new ScriptException("PARAMETER_LAYOUT", "局部形参目标越界");
-                cell.Values[parameter.TargetIndex] = argument.Value;
+                if (parameter.TargetIndex < 0 || parameter.TargetIndex >= cell.Length) throw new ScriptException("PARAMETER_LAYOUT", "局部形参目标越界");
+                cell.Write(parameter.TargetIndex, argument.Value);
             }
         }
         if (compiled.TryGetValue(descriptor.Id, out var function)) Initialize(frame, function);
@@ -217,8 +246,8 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
         if (target.Descriptor?.Reference == true) throw new ScriptException("UNBOUND_REFERENCE", "引用变量尚未绑定: " + reference.VariableId);
         return target;
     }
-    private EraValue Read(SlotReference reference) => CellFor(reference).Values[reference.Index];
-    int IBuiltinContext.ArrayLength(SlotReference reference) => CellFor(reference).Values.Length;
+    private EraValue Read(SlotReference reference) => CellFor(reference).Read(reference.Index);
+    int IBuiltinContext.ArrayLength(SlotReference reference) => CellFor(reference).Length;
     void IBuiltinContext.SetResult(long value, int index) { globals["RESULT"].Values[index] = new(value); }
     EraValue IBuiltinContext.TemplateValue(long number, string name, long at)
     {
@@ -390,7 +419,7 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
     {
         var cell = CellFor(reference);
         if (cell.Descriptor?.ReadOnly == true) throw new ScriptException("READ_ONLY", "常量不可写入");
-        cell.Values[reference.Index] = value.ConvertTo(cell.Kind);
+        cell.Write(reference.Index, value.ConvertTo(cell.Kind));
     }
     private SlotReference ArrayReference(Frame frame, string name, long? character)
     {
@@ -412,7 +441,7 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
             long index = alias.ArgumentRank == 0 ? indices.Length == 1 && indices[0] == 0 ? 0 : throw new ScriptException("RANK", "标量引用不接受数组下标")
                 : cell.Descriptor?.OffsetSpan(indices) ?? indices[0];
             long offset = checked(alias.Index + index);
-            if (offset < 0 || offset >= cell.Values.Length) throw new ScriptException("BOUNDS", "引用下标越界");
+            if (offset < 0 || offset >= cell.Length) throw new ScriptException("BOUNDS", "引用下标越界");
             return alias with { Index = (int)offset, IsCharacterSelector = false };
         }
         bool local = frame.Locals.TryGetValue(name, out Cell? target);
@@ -426,7 +455,7 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
         target ??= globals.GetValueOrDefault(name) ?? throw new ScriptException("VARIABLE", "变量不存在: " + name);
         if (target.Descriptor?.Reference == true) throw new ScriptException("UNBOUND_REFERENCE", "引用变量尚未绑定: " + name);
         long offsetIndex = target.Descriptor?.OffsetSpan(indices) ?? indices[0];
-        if (offsetIndex < 0 || offsetIndex >= target.Values.Length) throw new ScriptException("BOUNDS", "数组下标越界: " + name);
+        if (offsetIndex < 0 || offsetIndex >= target.Length) throw new ScriptException("BOUNDS", "数组下标越界: " + name);
         return new(name, (int)offsetIndex, local ? frame.Id : 0, epoch,
             target.Descriptor?.Scope == VariableScope.FunctionStatic ? frame.Descriptor.Id : null)
         { IsCharacterSelector = !local && target.Descriptor?.Scope == VariableScope.System && name is "MASTER" or "TARGET" or "ASSI" };
@@ -448,8 +477,8 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
         target ??= globals.GetValueOrDefault(name) ?? throw new ScriptException("VARIABLE", "变量不存在: " + name);
         if (target.Descriptor?.Reference == true) throw new ScriptException("UNBOUND_REFERENCE", "引用变量尚未绑定: " + name);
         long index = target.Descriptor?.OffsetSpan(indices) ?? indices[0];
-        if (index < 0 || index >= target.Values.Length) throw new ScriptException("BOUNDS", "数组下标越界: " + name);
-        return target.Values[(int)index];
+        if (index < 0 || index >= target.Length) throw new ScriptException("BOUNDS", "数组下标越界: " + name);
+        return target.Read((int)index);
     }
     private bool allowDoTrain;
     void IBuiltinContext.DoTrain(long command)

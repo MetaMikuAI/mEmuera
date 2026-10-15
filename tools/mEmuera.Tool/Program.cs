@@ -53,7 +53,8 @@ static async Task<int> MainAsync(string[] args)
         using var workspace = new CompilationWorkspace(source, EraBuiltins.Library.Catalog,
             occurrences is null ? null : requirement => occurrences.WriteLine(JsonSerializer.Serialize(requirement)));
         var watch = System.Diagnostics.Stopwatch.StartNew();
-        var options = await SystemVariableLoader.PrepareAsync(source, new(Profile: Option("--profile") ?? "era-v1", Encoding: Option("--encoding") ?? "utf-8"), ct);
+        var options = await SystemVariableLoader.PrepareAsync(source, new(Profile: Option("--profile") ?? "era-v1", Encoding: Option("--encoding") ?? "utf-8",
+            CacheCapacity: Option("--function-cache") is { } capacity ? int.Parse(capacity, System.Globalization.CultureInfo.InvariantCulture) : new CompileOptions().CacheCapacity), ct);
         var indexed = await workspace.IndexAsync(source, options, ct);
         if (args[0] == "scan")
         {

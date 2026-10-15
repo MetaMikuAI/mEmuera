@@ -76,8 +76,8 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
     { if (warnings.Add(code)) diagnostics.Add(new(code, message, Severity: Severity.Warning)); }
     private readonly List<Frame> frames = [];
     private readonly List<Operand> stack = [];
-    private readonly Dictionary<string, CompiledFunction> compiled = [];
-    private readonly Queue<string> compiledOrder = [];
+    private readonly Dictionary<string, (CompiledFunction Function, LinkedListNode<string> Node)> compiled = [];
+    private readonly LinkedList<string> compiledOrder = new();
     public int CachedFunctionCount => compiled.Count;
     private readonly DocumentBuilder document = new();
     private readonly List<Diagnostic> diagnostics = [];
@@ -197,7 +197,12 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
                 cell.Write(parameter.TargetIndex, argument.Value);
             }
         }
-        if (compiled.TryGetValue(descriptor.Id, out var function)) Initialize(frame, function);
+        if (compiled.TryGetValue(descriptor.Id, out var function))
+        {
+            if (function.Node != compiledOrder.Last)
+            { compiledOrder.Remove(function.Node); compiledOrder.AddLast(function.Node); }
+            Initialize(frame, function.Function);
+        }
         frames.Add(frame);
     }
     private static int ReferenceRank(FunctionDescriptor function, Parameter parameter)
@@ -1054,9 +1059,13 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
                 {
                     var payload = (CompilePayload)service.Payload;
                     if (compiledData.Function.Descriptor.Id != payload.FunctionId) return Reject("编译结果函数不匹配");
-                    if (!compiled.ContainsKey(payload.FunctionId)) compiledOrder.Enqueue(payload.FunctionId);
-                    compiled[payload.FunctionId] = compiledData.Function;
-                    while (compiled.Count > 128) compiled.Remove(compiledOrder.Dequeue());
+                    var node = compiled.TryGetValue(payload.FunctionId, out var cached) ? cached.Node : compiledOrder.AddLast(payload.FunctionId);
+                    compiled[payload.FunctionId] = (compiledData.Function, node);
+                    while (compiled.Count > Math.Max(1, game.Index.Options.CacheCapacity))
+                    {
+                        string oldest = compiledOrder.First!.Value;
+                        compiledOrder.RemoveFirst(); compiled.Remove(oldest);
+                    }
                     Initialize(frames[^1], compiledData.Function);
                 }
                 if (result.Data is LoadedData loaded) Restore(loaded.Snapshot, global);

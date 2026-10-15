@@ -12,6 +12,11 @@ public sealed class CharacterStore(IEnumerable<VariableDescriptor> variables, IR
     private long nextId;
     public int Count => order.Count;
     public long IdAt(long index) => At(index).Id;
+    public EraValue[] ValuesAt(long index, string name)
+    {
+        var instance = At(index);
+        return instance.Values.TryGetValue(name, out var values) ? values : throw new ScriptException("VARIABLE", "角色变量不存在: " + name);
+    }
     public int IndexOf(long id) => order.FindIndex(c => c.Id == id);
     private Instance At(long index) => index >= 0 && index < order.Count ? order[(int)index] : throw new ScriptException("CHARACTER_BOUNDS", "角色下标越界");
     public EraValue[] Values(long id, string name)

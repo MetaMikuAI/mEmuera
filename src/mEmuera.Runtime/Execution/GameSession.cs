@@ -506,25 +506,27 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
             target.Descriptor?.Scope == VariableScope.FunctionStatic ? frame.Descriptor.Id : null)
         { IsCharacterSelector = !local && target.Descriptor?.Scope == VariableScope.System && name is "MASTER" or "TARGET" or "ASSI" };
     }
-    private EraValue ReadVariable(Frame frame, string name, ReadOnlySpan<long> indices, bool explicitIndices)
+    private EraValue ReadVariable(Frame frame, string name, ReadOnlySpan<long> indices, bool explicitIndices, VariableDescriptor? resolved = null)
     {
         if (frame.Aliases.ContainsKey(name)) return Read(Reference(frame, name, indices, explicitIndices));
         bool local = frame.Locals.TryGetValue(name, out Cell? target);
-        if (!local && game.Index.VariablesByName.GetValueOrDefault(name) is { Scope: VariableScope.Character } spec)
-        {
-            bool explicitCharacter = spec.CharacterScalar ? explicitIndices : indices.Length == spec.Rank + 1;
-            long character = explicitCharacter ? indices[0] : globals["TARGET"].Values[0].AsInt();
-            ReadOnlySpan<long> subscripts = spec.CharacterScalar ? [0L] : explicitCharacter ? indices[1..] : indices;
-            int offset = spec.OffsetSpan(subscripts);
-            var values = characters.Values(characters.IdAt(character), name);
-            if (spec.Reference) throw new ScriptException("UNBOUND_REFERENCE", "引用变量尚未绑定: " + name);
-            return values[offset];
-        }
+        if (!local && (resolved ?? game.Index.VariablesByName.GetValueOrDefault(name)) is { Scope: VariableScope.Character } spec)
+            return ReadCharacterVariable(spec, indices, explicitIndices);
         target ??= globals.GetValueOrDefault(name) ?? throw new ScriptException("VARIABLE", "变量不存在: " + name);
         if (target.Descriptor?.Reference == true) throw new ScriptException("UNBOUND_REFERENCE", "引用变量尚未绑定: " + name);
         long index = target.Descriptor?.OffsetSpan(indices) ?? indices[0];
         if (index < 0 || index >= target.Length) throw new ScriptException("BOUNDS", "数组下标越界: " + name);
         return target.Read((int)index);
+    }
+    private EraValue ReadCharacterVariable(VariableDescriptor spec, ReadOnlySpan<long> indices, bool explicitIndices)
+    {
+        bool explicitCharacter = spec.CharacterScalar ? explicitIndices : indices.Length == spec.Rank + 1;
+        long character = explicitCharacter ? indices[0] : globals["TARGET"].Values[0].AsInt();
+        ReadOnlySpan<long> subscripts = spec.CharacterScalar ? [0L] : explicitCharacter ? indices[1..] : indices;
+        int offset = spec.OffsetSpan(subscripts);
+        var values = characters.ValuesAt(character, spec.Name);
+        if (spec.Reference) throw new ScriptException("UNBOUND_REFERENCE", "引用变量尚未绑定: " + spec.Name);
+        return values[offset];
     }
     private bool allowDoTrain;
     void IBuiltinContext.DoTrain(long command)
@@ -650,11 +652,14 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
                 break;
             case Op.Throw: StartThrow(Value().AsString()); break;
             case Op.ReadVariable:
+            case Op.ReadCharacter:
             {
                 int indexCount = Math.Max(1, instruction.Number);
                 Span<long> indices = indexCount <= 4 ? stackalloc long[indexCount] : new long[indexCount];
                 for (int i = indices.Length - 1; i >= 0; i--) indices[i] = Value().AsInt();
-                Put(ReadVariable(frame, instruction.Text, indices, instruction.Value.Integer != 0));
+                Put(instruction.Op == Op.ReadCharacter
+                    ? ReadCharacterVariable(instruction.ResolvedVariable ?? throw new ScriptException("BYTECODE", "角色读取缺少声明"), indices, instruction.Value.Integer != 0)
+                    : ReadVariable(frame, instruction.Text, indices, instruction.Value.Integer != 0, instruction.ResolvedVariable));
                 break;
             }
             case Op.Reference:

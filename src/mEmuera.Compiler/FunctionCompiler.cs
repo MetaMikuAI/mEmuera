@@ -46,7 +46,7 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
         public string Bound = "";
         public string Step = "";
     }
-    private int Emit(Op op, string text = "", int number = 0, EraValue value = default)
+    private int Emit(Op op, string text = "", int number = 0, EraValue value = default, VariableDescriptor? variable = null)
     {
         string? name = op switch
         {
@@ -56,7 +56,7 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
             Op.BeginTitle => "BEGIN_TITLE", Op.Quit => "QUIT", _ => null
         };
         if (name is not null) return Builtin(name);
-        code.Add(new(op, text, number, value, span)); return code.Count - 1;
+        code.Add(new(op, text, number, value, span) { ResolvedVariable = variable }); return code.Count - 1;
     }
     private int Builtin(string name, int? argumentCount = null)
     {
@@ -251,7 +251,10 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
         for (int i = 0; i < variable.Indices.Count; i++) Expression(Subscript(variable, variable.Indices[i], i));
         if (!variable.ExplicitIndices)
             while (count < specification.Shape.Length) { Emit(Op.Constant, value: new EraValue(0L)); count++; }
-        Emit(read ? Op.ReadVariable : Op.Reference, variable.Name, count, new(variable.ExplicitIndices ? 1L : 0L));
+        var operation = !read ? Op.Reference : specification.Scope == VariableScope.Character
+            && !locals.Any(v => v.Name == variable.Name)
+            && !descriptor.Parameters.Any(p => p.Name == variable.Name) ? Op.ReadCharacter : Op.ReadVariable;
+        Emit(operation, variable.Name, count, new(variable.ExplicitIndices ? 1L : 0L), read ? specification : null);
     }
     private void ArrayArgumentReference(Variable variable)
     {

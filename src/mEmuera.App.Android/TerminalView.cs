@@ -53,6 +53,7 @@ internal sealed class TerminalView : SKCanvasView
     public double LastPaintMs { get; private set; }
     public double TakeSlowestPaintMs() { double slowest = slowestPaintMs; slowestPaintMs = 0; return slowest; }
     private double slowestPaintMs;
+    public event Action<double>? FramePainted;
 
     protected override void OnPaintSurface(SKPaintSurfaceEventArgs e)
     {
@@ -61,6 +62,7 @@ internal sealed class TerminalView : SKCanvasView
         else e.Surface.Canvas.Clear(new SKColor(0xff000000u | (uint)painter.Theme.Background));
         LastPaintMs = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
         slowestPaintMs = Math.Max(slowestPaintMs, LastPaintMs);
+        FramePainted?.Invoke(LastPaintMs);
     }
 
     public override bool OnTouchEvent(MotionEvent? e)

@@ -32,6 +32,8 @@ public sealed class MainActivity : Activity
     private CancellationTokenSource? loading;
     private FrameLayout root = null!, content = null!;
     private TextView perfView = null!;
+    private LinearLayout perfPanel = null!;
+    private FrameTimeGraph frameGraph = null!;
     private PerfMonitor perf = null!;
     private CrashReporter reporter = null!;
     private bool perfTicking;
@@ -65,11 +67,15 @@ public sealed class MainActivity : Activity
         content = new FrameLayout(this);
         root.AddView(content, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.MatchParent));
         perfView = Ui.Label(this, "", 10);
-        perfView.SetBackgroundColor(Ui.Translucent(Ui.SurfaceVariant, 0xD0));
+        perfPanel = new LinearLayout(this) { Orientation = Orientation.Vertical };
+        perfPanel.SetBackgroundColor(Ui.Translucent(Ui.SurfaceVariant, 0xD0));
+        perfPanel.AddView(perfView);
+        frameGraph = new FrameTimeGraph(this) { Visibility = ViewStates.Gone };
+        perfPanel.AddView(frameGraph, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, Ui.Dp(this, 80)));
         perfView.SetPadding(Ui.Dp(this, 6), Ui.Dp(this, 4), Ui.Dp(this, 6), Ui.Dp(this, 4));
         var corner = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WrapContent, ViewGroup.LayoutParams.WrapContent, GravityFlags.Top | GravityFlags.End);
         corner.SetMargins(0, Ui.Dp(this, 4), Ui.Dp(this, 4), 0);
-        root.AddView(perfView, corner);
+        root.AddView(perfPanel, corner);
         root.SetOnApplyWindowInsetsListener(new Insets());
         SetContentView(root);
         SetPerf(PerfEnabled);
@@ -139,7 +145,9 @@ public sealed class MainActivity : Activity
     private void SetPerf(bool enabled)
     {
         PerfEnabled = enabled;
-        perfView.Visibility = enabled ? ViewStates.Visible : ViewStates.Gone;
+        perfPanel.Visibility = enabled ? ViewStates.Visible : ViewStates.Gone;
+        frameGraph.Recording = enabled;
+        frameGraph.Clear();
         if (game is not null) game.PerfVisible = enabled;
         if (enabled && !perfTicking) { perfTicking = true; PerfTick(); }
     }
@@ -149,11 +157,15 @@ public sealed class MainActivity : Activity
         if (!PerfEnabled || IsDestroyed) { perfTicking = false; return; }
         string? extra = game?.Stats() ?? loadingInfo;
         perfView.Text = perf.Sample() + (extra is null ? "" : "\n" + extra);
+        frameGraph.Visibility = game is null ? ViewStates.Gone : ViewStates.Visible;
+        frameGraph.Invalidate();
         root.PostDelayed(PerfTick, 1000);
     }
 
     private void ShowPicker()
     {
+        frameGraph.Clear();
+        frameGraph.Visibility = ViewStates.Gone;
         Window?.ClearFlags(WindowManagerFlags.KeepScreenOn);
         var page = new LinearLayout(this) { Orientation = Orientation.Vertical };
         int pad = Ui.Dp(this, 16);
@@ -175,7 +187,7 @@ public sealed class MainActivity : Activity
         page.AddView(open, Ui.Wrap(this));
         var perfSwitch = Ui.Button(this, PerfEnabled ? "性能监测：开" : "性能监测：关");
         perfSwitch.Click += (_, _) => { SetPerf(!PerfEnabled); perfSwitch.Text = PerfEnabled ? "性能监测：开" : "性能监测：关"; };
-        page.AddView(perfSwitch, Ui.Wrap(this, 8));
+        page.AddView(perfSwitch, Ui.Wrap(this));
         var github = Ui.Button(this, "GitHub");
         github.Click += (_, _) =>
         {
@@ -243,6 +255,7 @@ public sealed class MainActivity : Activity
             running.Exited += () => _ = ExitAsync(running);
             running.FontSizeChanged += size => Preferences.Edit()!.PutFloat("fontSize", size)!.Apply();
             running.PerfVisible = PerfEnabled;
+            running.FramePainted += frameGraph.AddSample;
             running.PerfToggled += () => SetPerf(!PerfEnabled);
             loadingInfo = null;
             reporter.Begin(running.Breadcrumb);
@@ -264,6 +277,7 @@ public sealed class MainActivity : Activity
     {
         if (game != running) return;
         game = null;
+        running.FramePainted -= frameGraph.AddSample;
         reporter.End();
         ShowPicker();
         await running.DisposeAsync();

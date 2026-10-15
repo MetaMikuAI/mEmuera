@@ -56,7 +56,7 @@ internal sealed class GamePage : IAsyncDisposable
         painter = new CellPainter(fontSize: fontSize);
         terminal = new TerminalView(activity, screen, painter);
 
-        // 状态行浮在正文左下角、按钮条始终占位：两者出现或消失都不改变正文的格子数，免得引擎反复重排。
+        // 状态行和按钮条独立占位，提示变化不改变正文格子数。
         var root = new LinearLayout(activity) { Orientation = Orientation.Vertical };
         root.SetBackgroundColor(Ui.Background);
         var body = new FrameLayout(activity);
@@ -65,8 +65,8 @@ internal sealed class GamePage : IAsyncDisposable
         status.SetSingleLine(true); status.Ellipsize = TextUtils.TruncateAt.End;
         status.SetBackgroundColor(Ui.Translucent(Ui.SurfaceVariant, 0xE0));
         status.SetPadding(Ui.Dp(activity, 8), Ui.Dp(activity, 2), Ui.Dp(activity, 8), Ui.Dp(activity, 2));
-        body.AddView(status, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WrapContent, ViewGroup.LayoutParams.WrapContent, GravityFlags.Bottom | GravityFlags.Start));
         root.AddView(body, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, 0, 1));
+        root.AddView(status, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.WrapContent));
         actions = new LinearLayout(activity) { Orientation = Orientation.Horizontal };
         actions.SetGravity(GravityFlags.CenterVertical);
         actions.SetMinimumHeight(Ui.Dp(activity, 44));
@@ -129,6 +129,11 @@ internal sealed class GamePage : IAsyncDisposable
     /// <summary>菜单里切换了性能小窗；勾选状态由 <see cref="PerfVisible"/> 提供。</summary>
     public event Action? PerfToggled;
     public bool PerfVisible { get; set; }
+    public event Action<double>? FramePainted
+    {
+        add => terminal.FramePainted += value;
+        remove => terminal.FramePainted -= value;
+    }
 
     public void ConfirmExit()
     {
@@ -242,7 +247,7 @@ internal sealed class GamePage : IAsyncDisposable
             if (!ticking) { ticking = true; status.PostDelayed(() => { ticking = false; if (!disposed) UpdateStatus(); }, 500); }
         }
         status.Text = text ?? ""; status.SetTextColor(color);
-        status.Visibility = text is null ? ViewStates.Gone : ViewStates.Visible;
+        status.Visibility = text is null ? ViewStates.Invisible : ViewStates.Visible;
     }
 
     // 当前输入的按钮放到底部按钮条，文字取正文里该按钮最近一次出现的内容。

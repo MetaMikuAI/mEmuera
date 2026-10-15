@@ -102,16 +102,11 @@ public sealed partial class RasterService(GamePathResolver paths, IGameSource so
             foreach (var item in sprite.Frames) { frame = item; elapsed -= item.Delay; if (elapsed <= 0) break; }
             if (!Created(frame.Image)) return canvas;
             using var pixels = await Snapshot(frame.Image, ct);
-            for (int y = 0; y < pixels.Height; y++)
-            {
-                ct.ThrowIfCancellationRequested();
-                int ty = y + frame.Image.OffsetY; if (ty < 0 || ty >= canvas.Height) continue;
-                for (int x = 0; x < pixels.Width; x++)
-                {
-                    int tx = x + frame.Image.OffsetX;
-                    if (tx >= 0 && tx < canvas.Width) canvas[tx, ty] = pixels[x, y];
-                }
-            }
+            ct.ThrowIfCancellationRequested();
+            using var drawing = new SKCanvas(canvas.Bitmap);
+            using var paint = new SKPaint { BlendMode = SKBlendMode.Src };
+            drawing.DrawBitmap(pixels.Bitmap, frame.Image.OffsetX, frame.Image.OffsetY, paint);
+            drawing.Flush();
             return canvas;
         }
         SkiaBitmap bitmap = sprite.GraphicsId is { } id ? graphics[id] : await Load(sprite.File, ct);
@@ -119,17 +114,14 @@ public sealed partial class RasterService(GamePathResolver paths, IGameSource so
             int sx = sprite.Width == 0 ? 0 : sprite.X, sy = sprite.Width == 0 ? 0 : sprite.Y;
             int sw = sprite.Width == 0 ? bitmap.Width : sprite.Width, sh = sprite.Width == 0 ? bitmap.Height : sprite.Height;
             Size(Math.Abs(sw), Math.Abs(sh));
+            ct.ThrowIfCancellationRequested();
             var result = new SkiaBitmap(Math.Abs(sw), Math.Abs(sh));
-            for (int y = 0; y < result.Height; y++)
-            {
-                ct.ThrowIfCancellationRequested();
-                int by = sy + (sh > 0 ? y : -y - 1); if (by < 0 || by >= bitmap.Height) continue;
-                for (int x = 0; x < result.Width; x++)
-                {
-                    int bx = sx + (sw > 0 ? x : -x - 1);
-                    if (bx >= 0 && bx < bitmap.Width) result[x, y] = bitmap[bx, by];
-                }
-            }
+            using var drawing = new SKCanvas(result.Bitmap);
+            using var paint = new SKPaint { BlendMode = SKBlendMode.Src };
+            drawing.Translate(sw > 0 ? -sx : sx, sh > 0 ? -sy : sy);
+            drawing.Scale(sw > 0 ? 1 : -1, sh > 0 ? 1 : -1);
+            drawing.DrawBitmap(bitmap.Bitmap, 0, 0, paint);
+            drawing.Flush();
             return result;
         }
     }

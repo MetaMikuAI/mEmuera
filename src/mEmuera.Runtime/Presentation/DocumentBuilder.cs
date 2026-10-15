@@ -148,6 +148,7 @@ internal sealed partial class DocumentBuilder
     public void Background(int? color) { backgroundColor = color; revision++; }
     public TextAlignment Alignment { get; set; }
     private PresentationDocument? frozen;
+    public long Revision => frozen?.Revision ?? revision;
     public bool RedrawEnabled => frozen is null;
     public void Redraw(bool enabled) { if (enabled) { frozen = null; revision++; } else frozen ??= Snapshot(); }
     public void Refresh()

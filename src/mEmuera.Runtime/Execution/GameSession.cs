@@ -138,7 +138,7 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
         return cell;
     }
     private void Log(TraceKind kind, string detail, string? source = null, long? request = null)
-    { if (trace.Count == 1024) trace.Dequeue(); trace.Enqueue(new(kind, epoch, instructions, detail, currentSpan, source, request, document.Snapshot().Revision)); }
+    { if (trace.Count == 1024) trace.Dequeue(); trace.Enqueue(new(kind, epoch, instructions, detail, currentSpan, source, request, document.Revision)); }
     public ImmutableArray<ExecutionEvent> Trace => trace.ToImmutableArray();
     void IBuiltinContext.DebugClear()
     {
@@ -222,8 +222,13 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
     private void Initialize(Frame frame, CompiledFunction function)
     {
         frame.Function = function;
-        foreach (var local in function.Descriptor.Locals)
+        for (int i = 0; i < function.Descriptor.Locals.Length; i++)
+        {
+            var local = function.Descriptor.Locals[i];
+            // 入栈时已建立原有局部变量，仅补充编译器生成的变量。
+            if (i < frame.Descriptor.Locals.Length && ReferenceEquals(local, frame.Descriptor.Locals[i])) continue;
             if (!frame.Locals.ContainsKey(local.Name)) frame.Locals.Add(local.Name, LocalCell(function.Descriptor, local));
+        }
     }
     private Operand Pop()
     { if (stack.Count == 0) throw new ScriptException("STACK", "表达式栈为空"); var value = stack[^1]; stack.RemoveAt(stack.Count - 1); return value; }
@@ -500,7 +505,7 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
         if (budget.Instructions <= 0) throw new ArgumentOutOfRangeException(nameof(budget));
         if (budget.Cancellation.IsCancellationRequested) Apply(new CancelMessage());
         if (state != StopReason.Yielded) return new(state, service);
-        long revision = document.Snapshot().Revision;
+        long revision = document.Revision;
         try
         {
             for (int i = 0; i < budget.Instructions; i++)
@@ -540,7 +545,7 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
         }
         catch (Exception e) when (e is ScriptException or OverflowException or DivideByZeroException)
         { Fault(e is ScriptException script ? script.Diagnostic : new("ARITHMETIC", e.Message)); }
-        if (revision != document.Snapshot().Revision) Log(TraceKind.Presentation, "文档更新");
+        if (revision != document.Revision) Log(TraceKind.Presentation, "文档更新");
         if (state == StopReason.Yielded) Log(TraceKind.Yielded, "执行预算");
         return new(state, service);
     }
@@ -878,7 +883,7 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
     {
         if (message is AnimationFrames animation)
         {
-            if (animation.Epoch != epoch || animation.DocumentRevision != document.Snapshot().Revision || animation.InputRequestId != input?.Id
+            if (animation.Epoch != epoch || animation.DocumentRevision != document.Revision || animation.InputRequestId != input?.Id
                 || state != StopReason.WaitingInput || document.AnimationInterval == 0)
                 return new(false, "过期动画帧");
             if (animation.Error is { } error) Fault(error);
@@ -904,7 +909,7 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
         }
         if (message is PointerMessage pointer)
         {
-            if (pointer.Epoch != epoch || pointer.DocumentRevision != document.Snapshot().Revision) return new(false, "过期指向");
+            if (pointer.Epoch != epoch || pointer.DocumentRevision != document.Revision) return new(false, "过期指向");
             mouseX = pointer.X; mouseY = pointer.Y;
             hoveredButton = pointer.ButtonId is { } id && document.Buttons().TryGetValue(id, out var value) ? value.ToString() : "";
             hoveredEpoch = epoch; hoveredRevision = pointer.DocumentRevision; return new(true, "指向已更新");

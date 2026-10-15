@@ -197,7 +197,7 @@ public enum Op
 {
     Constant, Load, Reference, Store, Duplicate, Pop, Unary, Binary, Jump, JumpFalse, JumpTrue, AdvanceReference,
     Call, DynamicCall, Return, Emit, Button, Input, ClearLine, Color, Save, LoadSave, BeginTitle, Quit, LineCount, Builtin, StoreArray,
-    StringCall, Throw, ReadVariable, ReadCharacter, ReadLocal, ReadLocalConstant
+    StringCall, Throw, ReadVariable, ReadCharacter, ReadLocal, ReadLocalConstant, StoreLocalConstant
 }
 public sealed record Instruction(Op Op, string Text, int Number, EraValue Value, SourceSpan Span)
 {

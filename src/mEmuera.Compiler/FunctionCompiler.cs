@@ -330,7 +330,21 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
         Expression(expression);
     }
     private void Assign(Variable target, Expr value)
-    { Reference(target); Expression(value); Emit(Op.Store); }
+    { var store = PrepareStore(target); Expression(value); Store(store); }
+    private Instruction? PrepareStore(Variable target)
+    {
+        var specification = Resolve(target.Name);
+        int slot = locals.FindIndex(v => v.Name == target.Name);
+        if (slot >= 0 && !specification.Reference && !descriptor.Parameters.Any(p => p.Name == target.Name && p.Reference)
+            && specification.Shape.Length == 1 && target.Indices.Count == 1
+            && target.Indices[0] is Literal { Value.Kind: ValueKind.Integer } literal
+            && literal.Value.Integer >= 0 && literal.Value.Integer < specification.Length)
+            return new(Op.StoreLocalConstant, target.Name, (int)literal.Value.Integer, default, span) { LocalSlot = slot };
+        Reference(target);
+        return null;
+    }
+    private void Store(Instruction? store)
+    { if (store is null) Emit(Op.Store); else code.Add(store); }
     private void Increment(Variable target, Expr step)
     {
         Reference(target); Emit(Op.Duplicate); Emit(Op.Load); Expression(step); Emit(Op.Binary, "+"); Emit(Op.Store);
@@ -945,10 +959,12 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
                 if (operation is not ("=" or "'=" or "+=" or "-=" or "*=" or "/=" or "%=" or "&=" or "|=" or "^=" or "<<=" or ">>=")) throw new ScriptException("ASSIGNMENT", "非法赋值运算符", span);
                 if (operation is "&=" or "|=" or "^=" or "<<=" or ">>=" && Kind(targetVariable) != ValueKind.Integer)
                     throw new ScriptException("TYPE", "位运算赋值需要整数", span);
-                Reference(targetVariable);
-                if (operation is not ("=" or "'=")) { Emit(Op.Duplicate); Emit(Op.Load); }
+                Instruction? directStore;
                 if (operation == "=" && Resolve(targetVariable.Name).Kind == ValueKind.String)
+                {
+                    directStore = PrepareStore(targetVariable);
                     Format(text[valueStart..].TrimStart());
+                }
                 else
                 {
                     tokens = new Tokens(text[valueStart..], span with { Start = span.Start + valueStart, Column = span.Column + valueStart });
@@ -960,13 +976,16 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
                         if (Kind(valueExpression) != Resolve(targetVariable.Name).Kind && !(Resolve(targetVariable.Name).Kind == ValueKind.Float && Kind(valueExpression) == ValueKind.Integer)) throw new ScriptException("TYPE", "赋值类型不匹配", span);
                     if (values.Count > 1)
                     {
+                        Reference(targetVariable);
                         foreach (var value in values) Expression(value);
                         Emit(Op.StoreArray, number: values.Count); break;
                     }
+                    directStore = operation is "=" or "'=" ? PrepareStore(targetVariable) : null;
+                    if (operation is not ("=" or "'=")) { Reference(targetVariable); Emit(Op.Duplicate); Emit(Op.Load); }
                     Expression(values[0]);
                 }
                 if (operation is not ("=" or "'=")) Emit(Op.Binary, operation[..^1]);
-                Emit(Op.Store); break;
+                Store(directStore); break;
         }
     }
     private void DataStatement(string text)

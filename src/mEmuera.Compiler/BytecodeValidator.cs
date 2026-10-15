@@ -22,7 +22,7 @@ internal static class BytecodeValidator
                 Op.Call or Op.Return or Op.Builtin => instruction.Number,
                 Op.DynamicCall or Op.StoreArray => instruction.Number + 1,
                 Op.Reference or Op.ReadVariable or Op.ReadCharacter or Op.ReadLocal => Math.Max(1, instruction.Number),
-                Op.Load or Op.Duplicate or Op.Pop or Op.Unary or Op.JumpFalse or Op.JumpTrue or Op.Emit or Op.ClearLine or Op.LoadSave or Op.AdvanceReference or Op.StringCall or Op.Throw => 1,
+                Op.Load or Op.Duplicate or Op.Pop or Op.Unary or Op.JumpFalse or Op.JumpTrue or Op.Emit or Op.ClearLine or Op.LoadSave or Op.AdvanceReference or Op.StringCall or Op.Throw or Op.StoreLocalConstant => 1,
                 Op.Color when instruction.Text != "RESET" => 1, _ => 0
             };
             int produced = instruction.Op switch

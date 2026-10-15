@@ -97,11 +97,12 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
     private bool loadCommitted;
     private SourceSpan? currentSpan;
     private readonly ITextMetrics? metrics;
+    private readonly Action<FunctionDescriptor>? functionEntered;
     private readonly Func<PresentationDocument, long, PointerMessage?>? pointerQuery;
     private int viewportColumns = 80;
     private int viewportRows = 25;
     public GameSession(GameDefinition game, BuiltinLibrary builtins, Func<long>? clock = null, ITextMetrics? metrics = null, Func<int, bool?>? keyState = null, Func<bool>? inputActive = null,
-        Func<PresentationDocument, long, PointerMessage?>? pointerQuery = null)
+        Func<PresentationDocument, long, PointerMessage?>? pointerQuery = null, Action<FunctionDescriptor>? functionEntered = null)
     {
         this.game = game; this.builtins = builtins; this.clock = clock ?? (() => Environment.TickCount64);
         foreach (var signature in builtins.Catalog.Signatures)
@@ -110,6 +111,7 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
         nativeKeyState = keyState;
         this.inputActive = inputActive;
         this.pointerQuery = pointerQuery;
+        this.functionEntered = functionEntered;
         if (game.Index.Options.Profile != "minimal-v1")
         {
             document.NumberedText = builtins.NumberedText;
@@ -533,7 +535,7 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
                     state = StopReason.Completed; break;
                 }
                 var frame = frames[^1];
-                if (!frame.Entered) { frame.Entered = true; Log(TraceKind.Enter, frame.Descriptor.Name); }
+                if (!frame.Entered) { frame.Entered = true; Log(TraceKind.Enter, frame.Descriptor.Name); functionEntered?.Invoke(frame.Descriptor); }
                 if (frame.Function is null)
                 { Request(ServiceKind.Compile, new CompilePayload(frame.Descriptor.Id)); break; }
                 if (frame.Pc >= frame.Function.Code.Length) throw new ScriptException("BYTECODE", "指令地址越界");

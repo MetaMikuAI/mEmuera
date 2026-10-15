@@ -129,7 +129,14 @@ static async Task<int> MainAsync(string[] args)
         await using var services = new GameServices(game, workspace, source, indexed.Index.Manifest, indexed.Index.Options, paths,
             new mEmuera.Infrastructure.Media.AudioProcessService(paths, Option("--audio-player") ?? "ffplay"));
         var dispatcher = services.Dispatcher;
-        long now = 0; var session = new GameSession(game with { Entry = entry }, EraBuiltins.Library, () => now, new TerminalTextMetrics());
+        int next = 0;
+        var functionCalls = args.Contains("--profile-calls") ? new Dictionary<string, long>() : null;
+        int profileCallsFromAction = int.Parse(Option("--profile-calls-from") ?? "0", System.Globalization.CultureInfo.InvariantCulture);
+        long now = 0; var session = new GameSession(game with { Entry = entry }, EraBuiltins.Library, () => now, new TerminalTextMetrics(),
+            functionEntered: functionCalls is null ? null : function =>
+            {
+                if (next > profileCallsFromAction) functionCalls[function.Id] = functionCalls.GetValueOrDefault(function.Id) + 1;
+            });
         ReplayAction[] actions = Option("--trace") is { } trace ? JsonSerializer.Deserialize<ReplayAction[]>(await File.ReadAllTextAsync(trace))! : [];
         var reportSelection = (Option("--report-variables") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries).Select(name => new StateSelection(name)).ToList();
         if (Option("--report-selection") is { } selectionPath)
@@ -140,7 +147,7 @@ static async Task<int> MainAsync(string[] args)
             return session.InspectSelected(reportSelection.Where(s => s.Character is null || s.Character >= 0 && s.Character < count));
         }
         using var checkpoints = Option("--checkpoints") is { } checkpointPath ? new StreamWriter(checkpointPath, false) { AutoFlush = true } : null;
-        int next = 0, steps = 0; long? interactionStart = null; var latencies = new List<double>();
+        int steps = 0; long? interactionStart = null; var latencies = new List<double>();
         long allocationStart = 0;
         var interactionAllocatedBytes = new List<long>();
         var interactionCompilations = new List<long>();
@@ -249,6 +256,11 @@ static async Task<int> MainAsync(string[] args)
                 compilationRequests = compilationRequests?.OrderByDescending(p => p.Value).Take(40)
                     .Select(p => new { function = indexed.Index.ByFunctionId[p.Key].Name, source = indexed.Index.ByFunctionId[p.Key].Span, requests = p.Value }),
                 distinctCompiledFunctions = compilationRequests?.Count,
+                profileCallsFromAction,
+                totalFunctionCalls = functionCalls?.Values.Sum(),
+                distinctCalledFunctions = functionCalls?.Count,
+                functionCalls = functionCalls?.OrderByDescending(p => p.Value).Take(50)
+                    .Select(p => new { function = indexed.Index.ByFunctionId[p.Key].Name, source = indexed.Index.ByFunctionId[p.Key].Span, calls = p.Value }),
                 expected, consumedActions = next, totalActions = actions.Length, acceptanceSpecified = expected is not null,
                 os = System.Runtime.InteropServices.RuntimeInformation.OSDescription, framework = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription,
                 command = args, assemblies = Directory.EnumerateFiles(AppContext.BaseDirectory, "mEmuera*.dll").ToDictionary(path => Path.GetFileName(path)!,

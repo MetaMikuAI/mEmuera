@@ -13,6 +13,12 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
         public VariableDescriptor? Descriptor { get; } = descriptor;
         // 数组声明长度不变；逐项访问按需分配，整数组操作才展开完整存储。
         public int Length => Descriptor?.Length ?? values!.Length;
+        public void ResetLocal()
+        {
+            if (Descriptor?.Scope == VariableScope.FunctionStatic) return;
+            if (Descriptor is null) Array.Fill(values!, EraValue.Zero(Kind));
+            else values = null;
+        }
         public EraValue[] Values
         {
             get
@@ -55,6 +61,8 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
         public CompiledFunction? Function;
         public Dictionary<string, Cell> Locals = new(descriptor.Locals.Length);
         public Dictionary<string, SlotReference> Aliases = [];
+        public bool OwnsLocals = true;
+        public LinkedListNode<Frame>? PoolNode;
     }
     private readonly GameDefinition game;
     private readonly Func<long> clock;
@@ -75,6 +83,8 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
     void IBuiltinContext.WarnOnce(string code, string message)
     { if (warnings.Add(code)) diagnostics.Add(new(code, message, Severity: Severity.Warning)); }
     private readonly List<Frame> frames = [];
+    private readonly Dictionary<string, Frame> idleFrames = [];
+    private readonly LinkedList<Frame> idleFrameOrder = new();
     private readonly List<Operand> stack = [];
     private readonly Dictionary<string, (CompiledFunction Function, LinkedListNode<string> Node)> compiled = [];
     private readonly LinkedList<string> compiledOrder = new();
@@ -174,8 +184,19 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
             }
             else if (!game.Index.Options.CanBindArgument(args[i].Value.Kind, parameter.Kind)) throw new ScriptException("TYPE", "参数类型不匹配");
         }
-        var frame = new Frame(descriptor, ++nextFrame, mode, stackBase ?? stack.Count);
-        foreach (var variable in descriptor.Locals) frame.Locals.Add(variable.Name, LocalCell(descriptor, variable));
+        Frame frame;
+        if (idleFrames.Remove(descriptor.Id, out var idle))
+        {
+            idleFrameOrder.Remove(idle.PoolNode!);
+            frame = idle;
+            frame.Id = ++nextFrame; frame.Mode = mode; frame.StackBase = stackBase ?? stack.Count;
+            frame.Pc = 0; frame.Entered = false; frame.IsJump = false;
+        }
+        else
+        {
+            frame = new Frame(descriptor, ++nextFrame, mode, stackBase ?? stack.Count);
+            foreach (var variable in descriptor.Locals) frame.Locals.Add(variable.Name, LocalCell(descriptor, variable));
+        }
         for (int i = 0; i < descriptor.Parameters.Length; i++)
         {
             var parameter = descriptor.Parameters[i];
@@ -206,6 +227,19 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
             Initialize(frame, function.Function);
         }
         frames.Add(frame);
+    }
+    private void RecycleFrame(Frame frame)
+    {
+        if (!frame.OwnsLocals || idleFrames.ContainsKey(frame.Descriptor.Id)) return;
+        foreach (var cell in frame.Locals.Values) cell.ResetLocal();
+        frame.Aliases.Clear(); frame.Function = null;
+        frame.PoolNode ??= new(frame);
+        idleFrames.Add(frame.Descriptor.Id, frame); idleFrameOrder.AddLast(frame.PoolNode);
+        if (idleFrames.Count > 1024)
+        {
+            var oldest = idleFrameOrder.First!.Value;
+            idleFrameOrder.RemoveFirst(); idleFrames.Remove(oldest.Descriptor.Id);
+        }
     }
     private static int ReferenceRank(FunctionDescriptor function, Parameter parameter)
     {
@@ -708,6 +742,7 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
                     frames.RemoveAt(frames.Count - 1);
                     if (stack.Count != frame.StackBase) throw new ScriptException("STACK", "函数返回时栈不平衡");
                     Log(TraceKind.Return, frame.Descriptor.Name);
+                    RecycleFrame(frame);
                     if (!frame.IsJump) break;
                     frame = frames.LastOrDefault() ?? throw new ScriptException("STACK", "跳转缺少源调用帧");
                 }
@@ -1038,7 +1073,7 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
                     var caller = frames[^1];
                     if (dynamicResult.Function.Descriptor.Id != caller.Descriptor.Id) return Reject("动态变量作用域不匹配");
                     var dynamicFrame = new Frame(caller.Descriptor, ++nextFrame, 1, stack.Count)
-                    { Locals = new(caller.Locals), Aliases = caller.Aliases, Entered = true };
+                    { Locals = new(caller.Locals), Aliases = caller.Aliases, Entered = true, OwnsLocals = false };
                     Initialize(dynamicFrame, dynamicResult.Function); frames.Add(dynamicFrame);
                     pendingBuiltinType = null;
                 }

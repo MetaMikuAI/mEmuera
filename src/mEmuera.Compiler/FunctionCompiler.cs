@@ -345,9 +345,14 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
     }
     private void Store(Instruction? store)
     { if (store is null) Emit(Op.Store); else code.Add(store); }
+    private void ReadStoreTarget(Instruction? store)
+    {
+        if (store is null) { Emit(Op.Duplicate); Emit(Op.Load); }
+        else Emit(Op.ReadLocalConstant, store.Text, store.Number, localSlot: store.LocalSlot);
+    }
     private void Increment(Variable target, Expr step)
     {
-        Reference(target); Emit(Op.Duplicate); Emit(Op.Load); Expression(step); Emit(Op.Binary, "+"); Emit(Op.Store);
+        var store = PrepareStore(target); ReadStoreTarget(store); Expression(step); Emit(Op.Binary, "+"); Store(store);
     }
     private void Call(string name, IReadOnlyList<Expr> args, int mode)
     {
@@ -980,8 +985,8 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
                         foreach (var value in values) Expression(value);
                         Emit(Op.StoreArray, number: values.Count); break;
                     }
-                    directStore = operation is "=" or "'=" ? PrepareStore(targetVariable) : null;
-                    if (operation is not ("=" or "'=")) { Reference(targetVariable); Emit(Op.Duplicate); Emit(Op.Load); }
+                    directStore = PrepareStore(targetVariable);
+                    if (operation is not ("=" or "'=")) ReadStoreTarget(directStore);
                     Expression(values[0]);
                 }
                 if (operation is not ("=" or "'=")) Emit(Op.Binary, operation[..^1]);

@@ -27,7 +27,7 @@ internal static class BytecodeValidator
             };
             int produced = instruction.Op switch
             {
-                Op.Constant or Op.Reference or Op.ReadVariable or Op.ReadCharacter or Op.ReadLocal or Op.Load or Op.Unary or Op.Binary or Op.LineCount or Op.AdvanceReference or Op.StringCall => 1,
+                Op.Constant or Op.Reference or Op.ReadVariable or Op.ReadCharacter or Op.ReadLocal or Op.ReadLocalConstant or Op.Load or Op.Unary or Op.Binary or Op.LineCount or Op.AdvanceReference or Op.StringCall => 1,
                 Op.Duplicate => 2, Op.Call or Op.DynamicCall or Op.Builtin when instruction.Value.Integer == 1 => 1, _ => 0
             };
             if (item.Depth < required) return [new("BYTECODE_STACK", "指令缺少操作数", instruction.Span)];

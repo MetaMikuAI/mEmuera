@@ -665,6 +665,14 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
                 pendingBuiltinType = ValueKind.Integer;
                 break;
             case Op.Throw: StartThrow(Value().AsString()); break;
+            case Op.ReadLocalConstant:
+            {
+                if ((uint)instruction.LocalSlot >= (uint)frame.LocalSlots.Length) throw new ScriptException("BYTECODE", "局部变量位置无效");
+                var cell = frame.LocalSlots[instruction.LocalSlot];
+                if ((uint)instruction.Number >= (uint)cell.Length) throw new ScriptException("BOUNDS", "数组下标越界: " + instruction.Text);
+                Put(cell.Read(instruction.Number));
+                break;
+            }
             case Op.ReadVariable:
             case Op.ReadCharacter:
             case Op.ReadLocal:

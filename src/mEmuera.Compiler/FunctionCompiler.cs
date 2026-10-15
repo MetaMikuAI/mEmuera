@@ -248,11 +248,18 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
     {
         var specification = Resolve(variable.Name);
         int count = variable.Indices.Count;
+        int localSlot = read && !specification.Reference && !descriptor.Parameters.Any(p => p.Name == variable.Name && p.Reference)
+            ? locals.FindIndex(v => v.Name == variable.Name) : -1;
+        if (localSlot >= 0 && specification.Shape.Length == 1 && count == 1
+            && variable.Indices[0] is Literal { Value.Kind: ValueKind.Integer } literal
+            && literal.Value.Integer >= 0 && literal.Value.Integer < specification.Length)
+        {
+            Emit(Op.ReadLocalConstant, variable.Name, (int)literal.Value.Integer, variable: specification, localSlot: localSlot);
+            return;
+        }
         for (int i = 0; i < variable.Indices.Count; i++) Expression(Subscript(variable, variable.Indices[i], i));
         if (!variable.ExplicitIndices)
             while (count < specification.Shape.Length) { Emit(Op.Constant, value: new EraValue(0L)); count++; }
-        int localSlot = read && !specification.Reference && !descriptor.Parameters.Any(p => p.Name == variable.Name && p.Reference)
-            ? locals.FindIndex(v => v.Name == variable.Name) : -1;
         var operation = !read ? Op.Reference : localSlot >= 0 ? Op.ReadLocal : specification.Scope == VariableScope.Character
             && !locals.Any(v => v.Name == variable.Name)
             && !descriptor.Parameters.Any(p => p.Name == variable.Name) ? Op.ReadCharacter : Op.ReadVariable;

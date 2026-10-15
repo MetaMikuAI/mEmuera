@@ -120,7 +120,7 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
             if (entry.Kind != TraceKind.Debug) trace.Enqueue(entry);
         }
     }
-    private void Push(FunctionDescriptor descriptor, Operand[] args, int mode)
+    private void Push(FunctionDescriptor descriptor, ReadOnlySpan<Operand> args, int mode, int? stackBase = null)
     {
         if (frames.Count >= 4096) throw new ScriptException("STACK_LIMIT", "调用深度超过限制");
         for (int i = 0; i < descriptor.Parameters.Length; i++)
@@ -143,7 +143,7 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
             }
             else if (!game.Index.Options.CanBindArgument(args[i].Value.Kind, parameter.Kind)) throw new ScriptException("TYPE", "参数类型不匹配");
         }
-        var frame = new Frame(descriptor, ++nextFrame, mode, stack.Count);
+        var frame = new Frame(descriptor, ++nextFrame, mode, stackBase ?? stack.Count);
         foreach (var variable in descriptor.Locals) frame.Locals.Add(variable.Name, LocalCell(descriptor, variable));
         for (int i = 0; i < descriptor.Parameters.Length; i++)
         {
@@ -173,13 +173,14 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
     }
     private static int ReferenceRank(FunctionDescriptor function, Parameter parameter)
     {
-        var variable = function.Locals.FirstOrDefault(v => v.Name == parameter.Name);
-        return variable?.ReferenceRank ?? variable?.Shape.Length ?? 1;
+        foreach (var variable in function.Locals)
+            if (variable.Name == parameter.Name) return variable.ReferenceRank ?? variable.Rank;
+        return 1;
     }
     private bool ReferenceMatches(FunctionDescriptor function, Parameter parameter, SlotReference reference)
     {
         var cell = CellFor(reference); var variable = cell.Descriptor;
-        int actual = reference.ArgumentRank ?? variable?.ReferenceRank ?? (variable?.CharacterScalar == true ? 0 : variable?.Shape.Length ?? 1);
+        int actual = reference.ArgumentRank ?? variable?.ReferenceRank ?? (variable?.CharacterScalar == true ? 0 : variable?.Rank ?? 1);
         int expected = ReferenceRank(function, parameter);
         return cell.Kind == parameter.Kind && variable?.ReadOnly != true
             && (expected == 0 || actual == expected && (variable?.Scope != VariableScope.Character || reference.CharacterId is not null));
@@ -630,20 +631,37 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
             case Op.JumpTrue: if (Value().AsInt() != 0) frame.Pc = instruction.Number; break;
             case Op.Call: case Op.DynamicCall:
             {
-                var args = new Operand[instruction.Number]; for (int i = args.Length - 1; i >= 0; i--) args[i] = Pop();
-                string target = instruction.Op == Op.Call ? instruction.Text : Value().AsString();
-                var function = instruction.Op == Op.Call ? game.Index.ByFunctionId.GetValueOrDefault(target) : game.Index.Find(target);
-                if (function is null && instruction.Text == "TRYCALLFORM") break;
-                if (function is null) throw new ScriptException("UNDEFINED_FUNCTION", "调用目标不存在: " + target);
-                int mode = (int)instruction.Value.Integer;
-                if (function.Attributes.Any(a => a is "#FUNCTION" or "#FUNCTIONS") != (mode == 1))
-                    throw new ScriptException("FUNCTION_TYPE", mode == 1 ? "表达式调用需要 FUNCTION 属性" : "普通调用不能调用表达式函数");
-                Push(function, args, mode == 2 ? frame.Mode : mode);
-                frames[^1].IsJump = mode == 2; break;
+                int argumentStart = stack.Count - instruction.Number;
+                int callStart = argumentStart - (instruction.Op == Op.DynamicCall ? 1 : 0);
+                try
+                {
+                    // Push 只绑定参数，不改变值栈；绑定完成后统一移除调用参数。
+                    var args = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(stack).Slice(argumentStart, instruction.Number);
+                    var targetOperand = instruction.Op == Op.DynamicCall ? stack[callStart] : default;
+                    string target = instruction.Op == Op.Call ? instruction.Text
+                        : (targetOperand.Reference is { } reference ? Read(reference) : targetOperand.Value).AsString();
+                    var function = instruction.Op == Op.Call ? game.Index.ByFunctionId.GetValueOrDefault(target) : game.Index.Find(target);
+                    if (function is null && instruction.Text == "TRYCALLFORM") break;
+                    if (function is null) throw new ScriptException("UNDEFINED_FUNCTION", "调用目标不存在: " + target);
+                    int mode = (int)instruction.Value.Integer;
+                    if (function.Attributes.Any(a => a is "#FUNCTION" or "#FUNCTIONS") != (mode == 1))
+                        throw new ScriptException("FUNCTION_TYPE", mode == 1 ? "表达式调用需要 FUNCTION 属性" : "普通调用不能调用表达式函数");
+                    Push(function, args, mode == 2 ? frame.Mode : mode, callStart);
+                    frames[^1].IsJump = mode == 2;
+                }
+                finally { stack.RemoveRange(callStart, stack.Count - callStart); }
+                break;
             }
             case Op.Return:
             {
-                var values = new EraValue[instruction.Number]; for (int i = values.Length - 1; i >= 0; i--) values[i] = Value();
+                EraValue single = default;
+                EraValue[]? values = null;
+                if (instruction.Number == 1) single = Value();
+                else if (instruction.Number > 1)
+                {
+                    values = new EraValue[instruction.Number];
+                    for (int i = values.Length - 1; i >= 0; i--) values[i] = Value();
+                }
                 while (true)
                 {
                     frames.RemoveAt(frames.Count - 1);
@@ -653,8 +671,13 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
                     frame = frames.LastOrDefault() ?? throw new ScriptException("STACK", "跳转缺少源调用帧");
                 }
                 if (instruction.Text != "RETURNF")
-                    for (int i = 0; i < values.Length && i < globals["RESULT"].Values.Length; i++) globals["RESULT"].Values[i] = new(values[i].AsInt());
-                if (frame.Mode == 1) Put(values[0]);
+                    for (int i = 0; i < instruction.Number && i < globals["RESULT"].Values.Length; i++)
+                        globals["RESULT"].Values[i] = new((values is null ? single : values[i]).AsInt());
+                if (frame.Mode == 1)
+                {
+                    if (instruction.Number == 0) throw new ScriptException("BYTECODE", "表达式函数缺少返回值");
+                    Put(values is null ? single : values[0]);
+                }
                 if (pendingThrow is not null && frames.Count == beforeThrowDepth) AdvanceBeforeThrow();
                 break;
             }

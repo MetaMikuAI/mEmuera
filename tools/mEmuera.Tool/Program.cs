@@ -156,6 +156,11 @@ static async Task<int> MainAsync(string[] args)
         double compileTimeStart = 0;
         long progressAt = 0;
         var compilationRequests = args.Contains("--profile-compilation") ? new Dictionary<string, int>() : null;
+        var dynamicCompilationRequests = compilationRequests is null ? null : new Dictionary<string, int>();
+        long dynamicCompilations = 0, dynamicCompilationStart = 0;
+        double dynamicServiceMilliseconds = 0, dynamicServiceTimeStart = 0;
+        var interactionDynamicCompilations = new List<long>();
+        var interactionDynamicServiceMilliseconds = new List<double>();
         int maxSteps = int.Parse(Option("--max-steps") ?? "1000000", System.Globalization.CultureInfo.InvariantCulture);
         while (++steps < maxSteps)
         {
@@ -170,7 +175,17 @@ static async Task<int> MainAsync(string[] args)
             {
                 if (compilationRequests is not null && service.Payload is CompilePayload compile)
                     compilationRequests[compile.FunctionId] = compilationRequests.GetValueOrDefault(compile.FunctionId) + 1;
-                session.Apply(await dispatcher.ExecuteAsync(service, ct)); continue;
+                if (dynamicCompilationRequests is not null && service.Payload is DynamicVariablePayload dynamicCompile)
+                {
+                    dynamicCompilations++;
+                    dynamicCompilationRequests[dynamicCompile.Caller.Id] = dynamicCompilationRequests.GetValueOrDefault(dynamicCompile.Caller.Id) + 1;
+                    long dynamicStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+                    var response = await dispatcher.ExecuteAsync(service, ct);
+                    dynamicServiceMilliseconds += System.Diagnostics.Stopwatch.GetElapsedTime(dynamicStarted).TotalMilliseconds;
+                    session.Apply(response);
+                }
+                else session.Apply(await dispatcher.ExecuteAsync(service, ct));
+                continue;
             }
             if (result.Reason == StopReason.Yielded) continue;
             if (interactionStart is { } started)
@@ -179,6 +194,8 @@ static async Task<int> MainAsync(string[] args)
                 interactionAllocatedBytes.Add(GC.GetTotalAllocatedBytes(false) - allocationStart);
                 interactionCompilations.Add(workspace.CacheMisses - compilationStart);
                 interactionCompileMilliseconds.Add(workspace.CompileMilliseconds - compileTimeStart);
+                interactionDynamicCompilations.Add(dynamicCompilations - dynamicCompilationStart);
+                interactionDynamicServiceMilliseconds.Add(dynamicServiceMilliseconds - dynamicServiceTimeStart);
                 interactionStart = null;
             }
             if (result.Reason != StopReason.WaitingInput) break;
@@ -214,6 +231,8 @@ static async Task<int> MainAsync(string[] args)
             allocationStart = GC.GetTotalAllocatedBytes(false);
             compilationStart = workspace.CacheMisses;
             compileTimeStart = workspace.CompileMilliseconds;
+            dynamicCompilationStart = dynamicCompilations;
+            dynamicServiceTimeStart = dynamicServiceMilliseconds;
             if (action.ExpectVariable is { } variable && snapshot.Variables[variable][0].ToString() != action.ExpectValue) throw new ScriptException("REPLAY_ASSERT", "变量断言失败: " + variable);
             if (action.Stop) break;
             if (action.Advance is { } delta) { now += delta; session.Apply(new TimeoutMessage(now)); continue; }
@@ -256,6 +275,12 @@ static async Task<int> MainAsync(string[] args)
                 compilationRequests = compilationRequests?.OrderByDescending(p => p.Value).Take(40)
                     .Select(p => new { function = indexed.Index.ByFunctionId[p.Key].Name, source = indexed.Index.ByFunctionId[p.Key].Span, requests = p.Value }),
                 distinctCompiledFunctions = compilationRequests?.Count,
+                dynamicCompilations = compilationRequests is null ? (long?)null : dynamicCompilations,
+                dynamicServiceMilliseconds = compilationRequests is null ? (double?)null : dynamicServiceMilliseconds,
+                interactionDynamicCompilations = compilationRequests is null ? null : interactionDynamicCompilations,
+                interactionDynamicServiceMilliseconds = compilationRequests is null ? null : interactionDynamicServiceMilliseconds,
+                dynamicCompilationRequests = dynamicCompilationRequests?.OrderByDescending(p => p.Value).Take(40)
+                    .Select(p => new { function = indexed.Index.ByFunctionId[p.Key].Name, source = indexed.Index.ByFunctionId[p.Key].Span, requests = p.Value }),
                 profileCallsFromAction,
                 totalFunctionCalls = functionCalls?.Values.Sum(),
                 distinctCalledFunctions = functionCalls?.Count,

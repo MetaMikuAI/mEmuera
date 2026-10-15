@@ -5,6 +5,26 @@ namespace mEmuera.EraCompat.Builtins;
 
 public static class EraBuiltins
 {
+    private readonly struct ArgumentValues : IEnumerable<EraValue>
+    {
+        // 运行时直接读取已打包的参数；常量求值沿用编译器提供的值数组。
+        private readonly ImmutableArray<BuiltinArgument> arguments;
+        private readonly ImmutableArray<EraValue> constants;
+        public ArgumentValues(ImmutableArray<BuiltinArgument> arguments) { this.arguments = arguments; constants = default; }
+        public ArgumentValues(ImmutableArray<EraValue> constants) { this.constants = constants; arguments = default; }
+        public int Length => arguments.IsDefault ? constants.Length : arguments.Length;
+        public EraValue this[int index] => arguments.IsDefault ? constants[index] : arguments[index].Value;
+        public bool Any(Func<EraValue, bool> predicate)
+        {
+            for (int i = 0; i < Length; i++) if (predicate(this[i])) return true;
+            return false;
+        }
+        public IEnumerator<EraValue> GetEnumerator()
+        {
+            for (int i = 0; i < Length; i++) yield return this[i];
+        }
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    }
     private static EraValue Unicode(long value, IBuiltinContext? context = null)
     {
         if (value < 0 || value > 0xFFFF) throw new ScriptException("UNICODE", "UTF-16 码元越界");
@@ -12,7 +32,7 @@ public static class EraBuiltins
         { context?.WarnOnce("UNICODE_CONTROL_" + value, "UNICODE 控制字符返回空串"); return new(""); }
         return new(((char)value).ToString());
     }
-    private static int ColorValue(ImmutableArray<EraValue> arguments)
+    private static int ColorValue(ArgumentValues arguments)
     {
         if (arguments.Length is not (1 or 3)) throw new ScriptException("ARGUMENT_COUNT", "颜色需要一个整数或三个 RGB 分量");
         if (arguments.Length == 1) return (int)(arguments[0].AsInt() & 0xffffff);
@@ -25,8 +45,8 @@ public static class EraBuiltins
         public EraValue? Execute(IBuiltinContext context, ImmutableArray<BuiltinArgument> arguments)
         { context.Fill(arguments[0].Reference!, arguments[1].Value, arguments[2].Value.AsInt(), arguments[3].Value.AsInt()); return null; }
     }
-    private sealed record Handler(string Id, Func<IBuiltinContext, ImmutableArray<EraValue>, EraValue?> Run) : IBuiltinHandler
-    { public EraValue? Execute(IBuiltinContext context, ImmutableArray<BuiltinArgument> arguments) => Run(context, arguments.Select(a => a.Value).ToImmutableArray()); }
+    private sealed record Handler(string Id, Func<IBuiltinContext, ArgumentValues, EraValue?> Run) : IBuiltinHandler
+    { public EraValue? Execute(IBuiltinContext context, ImmutableArray<BuiltinArgument> arguments) => Run(context, new(arguments)); }
     public static BuiltinLibrary Library { get; } = Create();
     private static BuiltinLibrary Create()
     {
@@ -35,7 +55,7 @@ public static class EraBuiltins
             Variadic: new(null, CaptureReference: true)));
         handlers.Add(new PluginHandler());
         void Add(string name, ValueKind? result, BuiltinEffect effect, ValueKind?[] parameters,
-            Func<IBuiltinContext, ImmutableArray<EraValue>, EraValue?> action)
+            Func<IBuiltinContext, ArgumentValues, EraValue?> action)
         {
             string id = "era." + name;
             signatures.Add(new(name, id, parameters.Select(k => new BuiltinParameter(k)).ToImmutableArray(), result, effect));
@@ -274,8 +294,8 @@ public static class EraBuiltins
         handlers.Add(new FillHandler());
         SqlBuiltins.Register(signatures, handlers);
         var constants = new Dictionary<string, Func<ImmutableArray<EraValue>, EraValue>>(StringComparer.OrdinalIgnoreCase);
-        void Pure(string name, ValueKind result, ValueKind?[] parameters, Func<ImmutableArray<EraValue>, EraValue> run)
-        { constants.Add(name, run); Add(name, result, BuiltinEffect.Query, parameters, (_, a) => run(a)); }
+        void Pure(string name, ValueKind result, ValueKind?[] parameters, Func<ArgumentValues, EraValue> run)
+        { constants.Add(name, values => run(new(values))); Add(name, result, BuiltinEffect.Query, parameters, (_, a) => run(a)); }
         Pure("SQL_ESCAPE", ValueKind.String, [ValueKind.String], a => new(a[0].AsString().Replace("'", "''", StringComparison.Ordinal)));
         Pure("HTML_ESCAPE", ValueKind.String, [ValueKind.String], a => new(System.Security.SecurityElement.Escape(a[0].AsString())!));
         Pure("TOLOWER", ValueKind.String, [ValueKind.String], a => new(a[0].AsString().ToLowerInvariant()));

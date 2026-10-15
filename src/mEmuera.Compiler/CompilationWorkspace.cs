@@ -53,7 +53,8 @@ public sealed partial class CompilationWorkspace(IGameSource source, IBuiltinReg
     public long CacheMisses { get; private set; }
     public bool IndexCacheHit { get; private set; }
     public double CompileMilliseconds { get; private set; }
-    public long EstimatedCacheBytes => cache.Values.Sum(f => f.Code.Sum(i => 96L + i.Text.Length * 2L + (i.Value.Text?.Length ?? 0) * 2L))
+    public long EstimatedCacheBytes => cache.Values.Sum(f => f.Code.Sum(i => 104L + i.Text.Length * 2L + (i.Value.Text?.Length ?? 0) * 2L
+        + (i.StringTargets?.Sum(p => 64L + p.Key.Length * 2L) ?? 0)))
         + texts.Values.Sum(t => t.Text.Length * 2L) + expandedTexts.Values.Sum(text => text.Lines.Sum(l => 96L + l.Line.Text.Length * 2L));
     public ValueTask<IndexResult> IndexAsync(IGameSource gameSource, CompileOptions options, CancellationToken ct = default) => IndexAsync(gameSource, options, null, ct);
     /// <param name="progress">索引脚本的进度：已完成数、总数。</param>

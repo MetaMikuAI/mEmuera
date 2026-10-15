@@ -45,6 +45,9 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
         public Variable? Counter;
         public string Bound = "";
         public string Step = "";
+        public Dictionary<string, int>? StringTargets;
+        public int DefaultTarget = -1;
+        public int CaseCount;
     }
     private int Emit(Op op, string text = "", int number = 0, EraValue value = default, VariableDescriptor? variable = null, int localSlot = -1)
     {
@@ -551,10 +554,14 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
             { var block = Top("IF"); blocks.Pop(); if (block.False >= 0) Patch(block.False, code.Count); foreach (int at in block.Ends) Patch(at, code.Count); break; }
             case "SIF": TypedExpression(args.Count == 2 && args[1].Length == 0 ? args[0] : rest, ValueKind.Integer); sif = Emit(Op.JumpFalse); break;
             case "SELECTCASE":
-            { var selector = Parse(rest); string temp = Temporary(Kind(selector)); Assign(Var(temp), selector); blocks.Push(new("SELECT", code.Count) { Variable = temp }); break; }
+            {
+                var selector = Parse(rest); var kind = Kind(selector); string temp = Temporary(kind); Assign(Var(temp), selector);
+                blocks.Push(new("SELECT", code.Count) { Variable = temp, StringTargets = kind == ValueKind.String ? new(StringComparer.Ordinal) : null }); break;
+            }
             case "CASE": case "CASEELSE":
             {
                 var block = Top("SELECT");
+                if ((block.CaseCount++ == 0 && block.Start != code.Count) || block.DefaultTarget >= 0) block.StringTargets = null;
                 if (block.Start != code.Count) block.Ends.Add(Emit(Op.Jump));
                 if (block.False >= 0) Patch(block.False, code.Count);
                 block.False = -1;
@@ -562,12 +569,14 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
                 {
                     if (args.Count > 1 && args[^1].Length == 0) args.RemoveAt(args.Count - 1);
                     Expr? condition = null;
+                    List<string>? keys = block.StringTargets is null ? null : [];
                     for (int i = 0; i < args.Count; i++)
                     {
                         Expr item;
                         int range = args[i].IndexOf(" TO ", StringComparison.OrdinalIgnoreCase);
                         if (range >= 0)
                         {
+                            block.StringTargets = null;
                             item = new Binary("&&", new Binary(">=", Var(block.Variable), Parse(args[i][..range])),
                                 new Binary("<=", Var(block.Variable), Parse(args[i][(range + 4)..])));
                         }
@@ -575,18 +584,35 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
                         {
                             if (Parse("0 " + args[i][2..]) is not Binary comparison || comparison.Operator is not ("==" or "!=" or "<" or ">" or "<=" or ">="))
                                 throw new ScriptException("CASE", "CASE IS 需要比较运算符", span);
+                            block.StringTargets = null;
                             item = comparison with { Left = Var(block.Variable) };
                         }
-                        else item = new Binary("==", Var(block.Variable), Parse(args[i]));
+                        else
+                        {
+                            var value = Parse(args[i]);
+                            if (value is Literal { Value.Kind: ValueKind.String } literal) keys?.Add(literal.Value.AsString());
+                            else block.StringTargets = null;
+                            item = new Binary("==", Var(block.Variable), value);
+                        }
                         condition = condition is null ? item : new Binary("||", condition, item);
                     }
                     Expression(condition ?? throw new ScriptException("CASE", "CASE 条件为空", span));
                     block.False = Emit(Op.JumpFalse);
+                    if (block.StringTargets is { } targets)
+                        foreach (string key in keys!) targets.TryAdd(key, code.Count);
                 }
+                else block.DefaultTarget = code.Count;
                 break;
             }
             case "ENDSELECT":
-            { var block = Top("SELECT"); blocks.Pop(); if (block.False >= 0) Patch(block.False, code.Count); foreach (int at in block.Ends) Patch(at, code.Count); break; }
+            {
+                var block = Top("SELECT"); blocks.Pop(); if (block.False >= 0) Patch(block.False, code.Count); foreach (int at in block.Ends) Patch(at, code.Count);
+                if (block.StringTargets is { Count: >= 4 } targets)
+                    // 保留原指令地址，已有标签和跳转仍然有效；重复值保留首次出现的分支。
+                    code[block.Start] = new(Op.SwitchLocalString, block.Variable, block.DefaultTarget >= 0 ? block.DefaultTarget : code.Count, default, code[block.Start].Span)
+                    { LocalSlot = locals.FindIndex(v => v.Name == block.Variable), StringTargets = targets.ToImmutableDictionary(StringComparer.Ordinal) };
+                break;
+            }
             case "WHILE":
             { int start = code.Count; TypedExpression(rest, ValueKind.Integer); blocks.Push(new("WHILE", start) { False = Emit(Op.JumpFalse) }); break; }
             case "DO": blocks.Push(new("DO", code.Count)); break;

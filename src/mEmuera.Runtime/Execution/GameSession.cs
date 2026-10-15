@@ -752,6 +752,10 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
                 stack.Add(new(default, reference with { Index = next })); break;
             }
             case Op.Jump: frame.Pc = instruction.Number; break;
+            case Op.SwitchLocalString:
+                if ((uint)instruction.LocalSlot >= (uint)frame.LocalSlots.Length) throw new ScriptException("BYTECODE", "局部变量位置无效");
+                frame.Pc = instruction.StringTargets!.GetValueOrDefault(frame.LocalSlots[instruction.LocalSlot].Read(0).AsString(), instruction.Number);
+                break;
             case Op.JumpFalse: if (Value().AsInt() == 0) frame.Pc = instruction.Number; break;
             case Op.JumpTrue: if (Value().AsInt() != 0) frame.Pc = instruction.Number; break;
             case Op.Call: case Op.DynamicCall:

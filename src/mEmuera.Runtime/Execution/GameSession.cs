@@ -119,11 +119,12 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
     private SourceSpan? currentSpan;
     private readonly ITextMetrics? metrics;
     private readonly Action<FunctionDescriptor>? functionEntered;
+    private readonly Action<string, long>? builtinExecuted;
     private readonly Func<PresentationDocument, long, PointerMessage?>? pointerQuery;
     private int viewportColumns = 80;
     private int viewportRows = 25;
     public GameSession(GameDefinition game, BuiltinLibrary builtins, Func<long>? clock = null, ITextMetrics? metrics = null, Func<int, bool?>? keyState = null, Func<bool>? inputActive = null,
-        Func<PresentationDocument, long, PointerMessage?>? pointerQuery = null, Action<FunctionDescriptor>? functionEntered = null)
+        Func<PresentationDocument, long, PointerMessage?>? pointerQuery = null, Action<FunctionDescriptor>? functionEntered = null, Action<string, long>? builtinExecuted = null)
     {
         this.game = game; this.builtins = builtins; this.clock = clock ?? (() => Environment.TickCount64);
         foreach (var signature in builtins.Catalog.Signatures)
@@ -133,6 +134,7 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
         this.inputActive = inputActive;
         this.pointerQuery = pointerQuery;
         this.functionEntered = functionEntered;
+        this.builtinExecuted = builtinExecuted;
         if (game.Index.Options.Profile != "minimal-v1")
         {
             document.NumberedText = builtins.NumberedText;
@@ -641,6 +643,7 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
         {
             case Op.Builtin:
             {
+                long started = builtinExecuted is null ? 0 : System.Diagnostics.Stopwatch.GetTimestamp();
                 if (!builtins.Handlers.TryGetValue(instruction.Text, out var handler)) throw new ScriptException("BUILTIN_MISSING", "缺少内建处理器");
                 var signature = builtinSignatures[instruction.Text];
                 if (instruction.Number < signature.Parameters.Length || instruction.Number > signature.Parameters.Length && signature.Variadic is null) throw new ScriptException("BYTECODE", "内建参数数目错误");
@@ -656,6 +659,7 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
                 }
                 int depth = frames.Count;
                 var result = handler.Execute(this, System.Runtime.InteropServices.ImmutableCollectionsMarshal.AsImmutableArray(values));
+                builtinExecuted?.Invoke(instruction.Text, System.Diagnostics.Stopwatch.GetTimestamp() - started);
                 if (signature.ReturnType is { } returnType)
                 {
                     if (signature.NumericResult && values.Any(a => a.Value.Kind == ValueKind.Float)) returnType = ValueKind.Float;

@@ -132,10 +132,17 @@ static async Task<int> MainAsync(string[] args)
         int next = 0;
         var functionCalls = args.Contains("--profile-calls") ? new Dictionary<string, long>() : null;
         int profileCallsFromAction = int.Parse(Option("--profile-calls-from") ?? "0", System.Globalization.CultureInfo.InvariantCulture);
+        var builtinCalls = args.Contains("--profile-builtins") ? new Dictionary<string, (long Calls, long Ticks)>() : null;
+        int profileBuiltinsFromAction = int.Parse(Option("--profile-builtins-from") ?? "0", System.Globalization.CultureInfo.InvariantCulture);
         long now = 0; var session = new GameSession(game with { Entry = entry }, EraBuiltins.Library, () => now, new TerminalTextMetrics(),
             functionEntered: functionCalls is null ? null : function =>
             {
                 if (next > profileCallsFromAction) functionCalls[function.Id] = functionCalls.GetValueOrDefault(function.Id) + 1;
+            }, builtinExecuted: builtinCalls is null ? null : (name, ticks) =>
+            {
+                if (next <= profileBuiltinsFromAction) return;
+                var previous = builtinCalls.GetValueOrDefault(name);
+                builtinCalls[name] = (previous.Calls + 1, previous.Ticks + ticks);
             });
         ReplayAction[] actions = Option("--trace") is { } trace ? JsonSerializer.Deserialize<ReplayAction[]>(await File.ReadAllTextAsync(trace))! : [];
         var reportSelection = (Option("--report-variables") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries).Select(name => new StateSelection(name)).ToList();
@@ -299,6 +306,10 @@ static async Task<int> MainAsync(string[] args)
                 dynamicCompilationRequests = dynamicCompilationRequests?.OrderByDescending(p => p.Value).Take(40)
                     .Select(p => new { function = indexed.Index.ByFunctionId[p.Key].Name, source = indexed.Index.ByFunctionId[p.Key].Span, requests = p.Value }),
                 profileCallsFromAction,
+                profileBuiltinsFromAction,
+                builtinMeasurement = builtinCalls is null ? null : "timed builtin dispatch and handler; excludes subsequent script execution and asynchronous services; profiling adds overhead",
+                builtinCalls = builtinCalls?.OrderByDescending(p => p.Value.Ticks).Take(50)
+                    .Select(p => new { builtin = p.Key, calls = p.Value.Calls, milliseconds = p.Value.Ticks * 1000d / System.Diagnostics.Stopwatch.Frequency }),
                 totalFunctionCalls = functionCalls?.Values.Sum(),
                 distinctCalledFunctions = functionCalls?.Count,
                 functionCalls = functionCalls?.OrderByDescending(p => p.Value).Take(50)

@@ -484,19 +484,19 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
         if (cell.Descriptor?.ReadOnly == true) throw new ScriptException("READ_ONLY", "常量不可写入");
         cell.Write(reference.Index, value.ConvertTo(cell.Kind));
     }
-    private SlotReference ArrayReference(Frame frame, string name, long? character)
+    private SlotReference ArrayReference(Frame frame, string name, long? character, int? argumentRank = null)
     {
-        if (frame.Aliases.TryGetValue(name, out var alias)) return alias with { Index = 0, IsCharacterSelector = false };
+        if (frame.Aliases.TryGetValue(name, out var alias)) return alias with { Index = 0, IsCharacterSelector = false, ArgumentRank = argumentRank ?? alias.ArgumentRank };
         bool local = frame.Locals.TryGetValue(name, out Cell? target);
         if (!local && game.Index.VariablesByName.GetValueOrDefault(name) is { Scope: VariableScope.Character })
-            return new(name, 0, 0, epoch, CharacterId: characters.IdAt(character ?? globals["TARGET"].Values[0].AsInt()));
+            return new(name, 0, 0, epoch, CharacterId: characters.IdAt(character ?? globals["TARGET"].Values[0].AsInt())) { ArgumentRank = argumentRank };
         target ??= globals.GetValueOrDefault(name) ?? throw new ScriptException("VARIABLE", "变量不存在: " + name);
         if (target.Descriptor?.Reference == true) throw new ScriptException("UNBOUND_REFERENCE", "引用变量尚未绑定: " + name);
         return new(name, 0, local ? frame.Id : 0, epoch,
             target.Descriptor?.Scope == VariableScope.FunctionStatic ? frame.Descriptor.Id : null)
-        { IsCharacterSelector = !local && target.Descriptor?.Scope == VariableScope.System && name is "MASTER" or "TARGET" or "ASSI" };
+        { ArgumentRank = argumentRank, IsCharacterSelector = !local && target.Descriptor?.Scope == VariableScope.System && name is "MASTER" or "TARGET" or "ASSI" };
     }
-    private SlotReference Reference(Frame frame, string name, ReadOnlySpan<long> indices, bool explicitIndices = true)
+    private SlotReference Reference(Frame frame, string name, ReadOnlySpan<long> indices, bool explicitIndices = true, int? argumentRank = null)
     {
         if (frame.Aliases.TryGetValue(name, out var alias))
         {
@@ -505,7 +505,7 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
                 : cell.Descriptor?.OffsetSpan(indices) ?? indices[0];
             long offset = checked(alias.Index + index);
             if (offset < 0 || offset >= cell.Length) throw new ScriptException("BOUNDS", "引用下标越界");
-            return alias with { Index = (int)offset, IsCharacterSelector = false };
+            return alias with { Index = (int)offset, IsCharacterSelector = false, ArgumentRank = argumentRank ?? alias.ArgumentRank };
         }
         bool local = frame.Locals.TryGetValue(name, out Cell? target);
         if (!local && game.Index.VariablesByName.GetValueOrDefault(name) is { Scope: VariableScope.Character } spec)
@@ -513,7 +513,7 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
             bool explicitCharacter = spec.CharacterScalar ? explicitIndices : indices.Length == spec.Rank + 1;
             long character = explicitCharacter ? indices[0] : globals["TARGET"].Values[0].AsInt();
             ReadOnlySpan<long> subscripts = spec.CharacterScalar ? [0L] : explicitCharacter ? indices[1..] : indices;
-            return new(name, spec.OffsetSpan(subscripts), 0, epoch, CharacterId: characters.IdAt(character));
+            return new(name, spec.OffsetSpan(subscripts), 0, epoch, CharacterId: characters.IdAt(character)) { ArgumentRank = argumentRank };
         }
         target ??= globals.GetValueOrDefault(name) ?? throw new ScriptException("VARIABLE", "变量不存在: " + name);
         if (target.Descriptor?.Reference == true) throw new ScriptException("UNBOUND_REFERENCE", "引用变量尚未绑定: " + name);
@@ -521,7 +521,7 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
         if (offsetIndex < 0 || offsetIndex >= target.Length) throw new ScriptException("BOUNDS", "数组下标越界: " + name);
         return new(name, (int)offsetIndex, local ? frame.Id : 0, epoch,
             target.Descriptor?.Scope == VariableScope.FunctionStatic ? frame.Descriptor.Id : null)
-        { IsCharacterSelector = !local && target.Descriptor?.Scope == VariableScope.System && name is "MASTER" or "TARGET" or "ASSI" };
+        { ArgumentRank = argumentRank, IsCharacterSelector = !local && target.Descriptor?.Scope == VariableScope.System && name is "MASTER" or "TARGET" or "ASSI" };
     }
     private EraValue ReadVariable(Frame frame, string name, ReadOnlySpan<long> indices, bool explicitIndices, VariableDescriptor? resolved = null)
     {
@@ -716,12 +716,12 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
                 int indexCount = Math.Max(1, instruction.Number);
                 Span<long> indices = indexCount <= 4 ? stackalloc long[indexCount] : new long[indexCount];
                 for (int i = indices.Length - 1; i >= 0; i--) indices[i] = Value().AsInt();
-                var reference = (instruction.Value.Integer & 2) != 0
-                    ? ArrayReference(frame, instruction.Text, (instruction.Value.Integer & 1) != 0 ? indices[0] : null)
-                    : Reference(frame, instruction.Text, indices, instruction.Value.Integer != 0);
                 var specification = frame.Locals.GetValueOrDefault(instruction.Text)?.Descriptor
                     ?? game.Index.VariablesByName.GetValueOrDefault(instruction.Text);
-                if (specification is not null) reference = reference with { ArgumentRank = specification.ReferenceRank ?? (specification.CharacterScalar ? 0 : specification.Rank) };
+                int? argumentRank = specification is null ? null : specification.ReferenceRank ?? (specification.CharacterScalar ? 0 : specification.Rank);
+                var reference = (instruction.Value.Integer & 2) != 0
+                    ? ArrayReference(frame, instruction.Text, (instruction.Value.Integer & 1) != 0 ? indices[0] : null, argumentRank)
+                    : Reference(frame, instruction.Text, indices, instruction.Value.Integer != 0, argumentRank);
                 stack.Add(new(Read(reference), reference)); break;
             }
             case Op.Load: Put(Value()); break;

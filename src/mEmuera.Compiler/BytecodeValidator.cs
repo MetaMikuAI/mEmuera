@@ -21,13 +21,14 @@ internal static class BytecodeValidator
                 Op.Input when instruction.Text == "TINPUT" => 2,
                 Op.Call or Op.Return or Op.Builtin => instruction.Number,
                 Op.DynamicCall or Op.StoreArray => instruction.Number + 1,
-                Op.Reference or Op.ReadVariable or Op.ReadCharacter or Op.ReadLocal => Math.Max(1, instruction.Number),
+                Op.Reference or Op.ReadVariable or Op.ReadCharacter or Op.ReadLocal or Op.ReadGlobal => Math.Max(1, instruction.Number),
                 Op.Load or Op.Duplicate or Op.Pop or Op.Unary or Op.JumpFalse or Op.JumpTrue or Op.Emit or Op.ClearLine or Op.LoadSave or Op.AdvanceReference or Op.StringCall or Op.Throw or Op.StoreLocalConstant => 1,
                 Op.Color when instruction.Text != "RESET" => 1, _ => 0
             };
             int produced = instruction.Op switch
             {
                 Op.Constant or Op.Reference or Op.ReadVariable or Op.ReadCharacter or Op.ReadLocal or Op.ReadLocalConstant or Op.Load or Op.Unary or Op.Binary or Op.LineCount or Op.AdvanceReference or Op.StringCall => 1,
+                Op.ReadGlobal => 1,
                 Op.Duplicate => 2, Op.Call or Op.DynamicCall or Op.Builtin when instruction.Value.Integer == 1 => 1, _ => 0
             };
             if (item.Depth < required) return [new("BYTECODE_STACK", "指令缺少操作数", instruction.Span)];

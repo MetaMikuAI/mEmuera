@@ -284,6 +284,10 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
         var operation = !read ? Op.Reference : localSlot >= 0 ? Op.ReadLocal : specification.Scope == VariableScope.Character
             && !locals.Any(v => v.Name == variable.Name)
             && !descriptor.Parameters.Any(p => p.Name == variable.Name) ? Op.ReadCharacter : Op.ReadVariable;
+        if (operation == Op.ReadVariable && !specification.Reference
+            && specification.Scope is VariableScope.Global or VariableScope.System
+            && !locals.Any(v => v.Name == variable.Name) && !descriptor.Parameters.Any(p => p.Name == variable.Name))
+            operation = Op.ReadGlobal;
         Emit(operation, variable.Name, count, new(variable.ExplicitIndices ? 1L : 0L), read ? specification : null, localSlot);
     }
     private void ArrayArgumentReference(Variable variable)

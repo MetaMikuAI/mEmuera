@@ -587,6 +587,14 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
         if (spec.Reference) throw new ScriptException("UNBOUND_REFERENCE", "引用变量尚未绑定: " + spec.Name);
         return values[offset];
     }
+    private EraValue ReadGlobalVariable(string name, ReadOnlySpan<long> indices)
+    {
+        var cell = globals.GetValueOrDefault(name) ?? throw new ScriptException("VARIABLE", "变量不存在: " + name);
+        if (cell.Descriptor?.Reference == true) throw new ScriptException("UNBOUND_REFERENCE", "引用变量尚未绑定: " + name);
+        long index = cell.Descriptor?.OffsetSpan(indices) ?? indices[0];
+        if (index < 0 || index >= cell.Length) throw new ScriptException("BOUNDS", "数组下标越界: " + name);
+        return cell.Read((int)index);
+    }
     private static EraValue ReadLocalVariable(Frame frame, Instruction instruction, ReadOnlySpan<long> indices)
     {
         if ((uint)instruction.LocalSlot >= (uint)frame.LocalSlots.Length) throw new ScriptException("BYTECODE", "局部变量位置无效");
@@ -783,6 +791,7 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
                 break;
             }
             case Op.ReadVariable:
+            case Op.ReadGlobal:
             case Op.ReadCharacter:
             case Op.ReadLocal:
             {
@@ -792,6 +801,7 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
                 Put(instruction.Op switch
                 {
                     Op.ReadLocal => ReadLocalVariable(frame, instruction, indices),
+                    Op.ReadGlobal => ReadGlobalVariable(instruction.Text, indices),
                     Op.ReadCharacter => ReadCharacterVariable(instruction.ResolvedVariable ?? throw new ScriptException("BYTECODE", "角色读取缺少声明"), indices, instruction.Value.Integer != 0),
                     _ => ReadVariable(frame, instruction.Text, indices, instruction.Value.Integer != 0, instruction.ResolvedVariable)
                 });

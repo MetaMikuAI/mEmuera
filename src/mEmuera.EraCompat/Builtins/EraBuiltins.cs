@@ -312,7 +312,12 @@ public static class EraBuiltins
             long bit = a[1].AsInt(); if (bit is < 0 or > 63) throw new ScriptException("BIT_INDEX", "位下标越界");
             return new((a[0].AsInt() >> (int)bit) & 1);
         });
-        Pure("GROUPMATCH", ValueKind.Integer, [null, null], a => new((long)a.Skip(1).Count(v => v == a[0])));
+        Pure("GROUPMATCH", ValueKind.Integer, [null, null], a =>
+        {
+            var target = a[0]; long count = 0;
+            for (int i = 1; i < a.Length; i++) if (a[i] == target) count++;
+            return new(count);
+        });
         signatures[^1] = signatures[^1] with { Variadic = new(null), SameType = true };
         foreach (string name in new[] { "LOG", "LOG10", "CBRT", "SIGN" })
         {

@@ -17,7 +17,9 @@ public sealed class TerminalTextMetrics(int cellWidth = 8) : ITextMetrics
         while (elements.MoveNext())
         {
             string element = elements.GetTextElement();
-            int cells = element.EnumerateRunes().Select(r => Math.Max(0, UnicodeCalculator.GetWidth(r))).Sum();
+            int cells = 0;
+            foreach (var rune in element.EnumerateRunes())
+                cells = checked(cells + Math.Max(0, UnicodeCalculator.GetWidth(rune)));
             if (element.Contains('\u200d') || element.Contains('\ufe0f')) cells = 2;
             width = checked(width + Math.Max(1, cells));
         }

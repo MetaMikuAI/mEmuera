@@ -365,9 +365,20 @@ internal sealed partial class DocumentBuilder
         void Render(DocumentBuilder target, IEnumerable<HtmlAtom> source)
         {
             var sourceAtoms = source.ToArray();
+            ImmutableArray<StyledRun>.Builder? pendingRuns = null;
+            TextAlignment pendingAlignment = default;
+            bool pendingNoWrap = false;
+            void FlushText()
+            {
+                if (pendingRuns is null) return;
+                target.lines = target.lines.SetItem(target.lines.Count - 1, target.lines[^1] with
+                { Runs = pendingRuns.ToImmutable(), Alignment = pendingAlignment, NoWrap = pendingNoWrap });
+                pendingRuns = null;
+            }
             for (int at = 0; at < sourceAtoms.Length; at++)
             {
                 var atom = sourceAtoms[at];
+                if (atom.Shape is not null || atom.Image is not null || atom.Panel is not null || atom.Flush || atom.Text.Contains('\n')) FlushText();
                 if (atom.Shape is not null)
                 {
                     float fraction = ShapeFraction(target.lines[^1]);
@@ -436,6 +447,21 @@ internal sealed partial class DocumentBuilder
                 }
                 else
                 {
+                    if (!atom.Text.Contains('\n'))
+                    {
+                        if (atom.Text.Length == 0) continue;
+                        if (pendingRuns is null)
+                        {
+                            pendingRuns = target.lines[^1].Runs.ToBuilder();
+                            pendingNoWrap = target.lines[^1].NoWrap;
+                        }
+                        pendingRuns.Add(new(atom.Text, target.Color, id, value, target.Source)
+                        { Background = target.TextBackground, Style = target.Style, Font = target.Font, Tooltip = atom.Tooltip,
+                            TooltipId = tooltipId, ColorSpecified = atom.ColorSpecified, RawInput = atom.Value, ExportHtml = atom.ExportHtml });
+                        pendingAlignment = target.Alignment; pendingNoWrap |= atom.NoWrap;
+                        target.revision++;
+                        continue;
+                    }
                     string[] pieces = atom.Text.Split('\n');
                     for (int part = 0; part < pieces.Length; part++)
                     {
@@ -444,6 +470,7 @@ internal sealed partial class DocumentBuilder
                     }
                 }
             }
+            FlushText();
         }
         Render(this, atoms);
         Color = previous; Style = previousStyle; Alignment = previousAlignment; Font = previousFont;

@@ -168,7 +168,7 @@ public interface IBuiltinHandler
     string Id { get; }
     EraValue? Execute(IBuiltinContext context, ImmutableArray<BuiltinArgument> arguments);
 }
-public sealed record BuiltinArgument(EraValue Value, SlotReference? Reference = null, bool IsOmitted = false);
+public readonly record struct BuiltinArgument(EraValue Value, SlotReference? Reference = null, bool IsOmitted = false);
 public sealed record NumberedTextPart(int Start, int Length, long? Value);
 public sealed class BuiltinLibrary
 {

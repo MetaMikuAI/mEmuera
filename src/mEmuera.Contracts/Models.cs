@@ -41,6 +41,8 @@ public sealed record SourceText(SourceId Id, string Text)
 { public bool IsComplete { get; init; } = true; }
 public interface IGameSource
 {
+    // 所有文本读取（包括前缀）是否同时验证 SourceId 对应的文件内容。
+    bool ValidatesReads => false;
     ValueTask<SourceManifest> EnumerateAsync(CancellationToken ct = default);
     ValueTask<SourceText> ReadAsync(SourceId source, CancellationToken ct = default);
     // 返回至少指定 UTF-16 长度的前缀，或已到达末尾的完整文本。

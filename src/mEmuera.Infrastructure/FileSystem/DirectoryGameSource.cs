@@ -58,6 +58,7 @@ public sealed class GamePathResolver
 
 public sealed class DirectoryGameSource(string root, string encoding = "utf-8", bool scriptSnapshot = false, bool excludeRuntimeDirectories = false) : IGameSource
 {
+    public bool ValidatesReads => true;
     private readonly Dictionary<SourceId, byte[]> snapshot = [];
     private readonly Dictionary<SourceId, (long Length, long Modified)> stamps = [];
     private long readBytes, readFiles;

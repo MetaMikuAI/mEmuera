@@ -108,10 +108,11 @@ public sealed partial class CompilationWorkspace(IGameSource source, IBuiltinReg
             if (descriptor is null) return new(null, [new("FUNCTION", "函数不存在")]);
             // 已编译函数在本次会话内复用；脚本修改在重新进入游戏后生效。
             if (cache.TryGetValue(functionId, out var hit)) { CacheHits++; return new(hit, []); }
-            await ValidateSourcesAsync(descriptor.Span.Source, ct);
             bool cachedText = texts.TryGetValue(descriptor.Span.Source, out var text);
+            bool needsRead = !cachedText || (!text!.IsComplete && text.Text.Length < descriptor.BodyEnd);
+            await ValidateSourcesAsync(needsRead && source.ValidatesReads ? null : descriptor.Span.Source, ct);
             // 前缀不足时补读全文，避免同一缓存条目反复扩展和重新预处理。
-            if (!cachedText || (!text!.IsComplete && text.Text.Length < descriptor.BodyEnd))
+            if (needsRead)
             {
                 long readStarted = System.Diagnostics.Stopwatch.GetTimestamp();
                 try { text = cachedText ? await source.ReadAsync(descriptor.Span.Source, ct)
@@ -129,7 +130,7 @@ public sealed partial class CompilationWorkspace(IGameSource source, IBuiltinReg
             else SourceCacheHits++;
             CacheMisses++;
             long started = System.Diagnostics.Stopwatch.GetTimestamp();
-            if (!expandedTexts.TryGetValue(text.Id, out var expanded))
+            if (!expandedTexts.TryGetValue(text!.Id, out var expanded))
                 expandedTexts[text.Id] = expanded = new(Preprocessor.Read(text, new MacroEnvironment(program.Macros.Values), program.Options, ct: lifetime.Token));
             try { expanded.ReadThrough(descriptor.BodyEnd, ct); }
             catch { expandedTexts.Remove(text.Id); expanded.Dispose(); throw; }
@@ -145,13 +146,13 @@ public sealed partial class CompilationWorkspace(IGameSource source, IBuiltinReg
         catch (ScriptException e) { return new(null, [e.Diagnostic]); }
         finally { gate.Release(); }
     }
-    private async ValueTask ValidateSourcesAsync(SourceId caller, CancellationToken ct)
+    private async ValueTask ValidateSourcesAsync(SourceId? caller, CancellationToken ct)
     {
         long started = System.Diagnostics.Stopwatch.GetTimestamp();
         try
         {
             await source.ValidateAsync(dependencies, ct);
-            await source.ValidateAsync(caller, ct);
+            if (caller is not null) await source.ValidateAsync(caller, ct);
         }
         finally { ValidationMilliseconds += System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds; }
     }

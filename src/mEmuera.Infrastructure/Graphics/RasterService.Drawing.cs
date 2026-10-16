@@ -19,6 +19,7 @@ public sealed partial class RasterService
         public void Dispose() { Font?.Typeface.Dispose(); Font?.Dispose(); }
     }
     private readonly Dictionary<long, DrawingState> drawingStates = [];
+    private HashSet<string>? fontFamilies;
     private void DrawBitmap(long id, SkiaBitmap destination, SkiaBitmap source, int dx, int dy, int dw, int dh,
         int sx, int sy, int sw, int sh, ImmutableArray<long> matrix)
     {
@@ -69,7 +70,11 @@ public sealed partial class RasterService
         var a = request.Arguments;
         int Int(int i) => checked((int)a[i].AsInt());
         GraphicsData Result(long value) => new(new(value));
-        if (op == "CHKFONT") return Result(SKFontManager.Default.FontFamilies.Contains(a[0].AsString(), StringComparer.OrdinalIgnoreCase) ? 1 : 0);
+        if (op == "CHKFONT")
+        {
+            fontFamilies ??= new(SKFontManager.Default.FontFamilies, StringComparer.OrdinalIgnoreCase);
+            return Result(fontFamilies.Contains(a[0].AsString()) ? 1 : 0);
+        }
         if (op == "GGETTEXTSIZE")
         {
             using var font = CreateFont(a[1].AsString(), a[2].AsInt(), Int(3));

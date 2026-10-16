@@ -206,6 +206,10 @@ internal sealed partial class DocumentBuilder
         return (int)color;
     }
     private sealed record Shape(float X, float Y, float Width, float Height, uint Color, string Html);
+    private readonly record struct HtmlCacheKey(string Text, int? Foreground, TextAlignment Alignment, bool ToBuffer, int CellWidth);
+    private readonly Dictionary<HtmlCacheKey, HtmlAtom[]> htmlFragments = new();
+    private readonly Queue<HtmlCacheKey> htmlFragmentOrder = new();
+    private int htmlFragmentCharacters;
     private sealed record HtmlAtom(string Text, int? Color, int Style, TextAlignment Alignment, string? Value, int Button,
         InlineRaster? Image = null, bool Flush = false, InlinePanel? Panel = null, HtmlAtom[]? Children = null, bool NoWrap = false, Shape? Shape = null, string? Tooltip = null, string? Font = null, bool ColorSpecified = false, string? ExportHtml = null);
     public void Html(string text, bool toBuffer = true, IReadOnlyDictionary<string, RasterImage>? images = null, int cellWidth = 8)
@@ -340,7 +344,21 @@ internal sealed partial class DocumentBuilder
                 if (name == "p" && !toBuffer) atoms.Add(child with { Flush = true });
             }
         }
-        Walk(HtmlFragment.Parse(text), new("", DefaultForeground, 0, toBuffer ? Alignment : TextAlignment.Left, null, 0), 0);
+        var cacheKey = new HtmlCacheKey(text, DefaultForeground, toBuffer ? Alignment : TextAlignment.Left, toBuffer, cellWidth);
+        if (images is null && htmlFragments.TryGetValue(cacheKey, out var cached)) atoms.AddRange(cached);
+        else
+        {
+            Walk(HtmlFragment.Parse(text), new("", DefaultForeground, 0, cacheKey.Alignment, null, 0), 0);
+            if (images is null && text.Length <= 16384)
+            {
+                while (htmlFragments.Count >= 256 || htmlFragmentCharacters + text.Length > 262144)
+                {
+                    var oldest = htmlFragmentOrder.Dequeue();
+                    htmlFragments.Remove(oldest); htmlFragmentCharacters -= oldest.Text.Length;
+                }
+                htmlFragments.Add(cacheKey, atoms.ToArray()); htmlFragmentOrder.Enqueue(cacheKey); htmlFragmentCharacters += text.Length;
+            }
+        }
         if (!toBuffer && !IsPrintingBufferEmpty) NewLine();
         var ids = new Dictionary<int, long>(); var tooltipIds = new Dictionary<int, long>();
         int? previous = Color; int previousStyle = Style; var previousAlignment = Alignment; string? previousFont = Font;

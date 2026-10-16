@@ -105,6 +105,7 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
     private readonly record struct TraceEntry(TraceKind Kind, long Epoch, long Instructions, string Detail, SourceSpan? Span,
         string? InputSource, long? RequestId, long DocumentRevision);
     private readonly TraceEntry[] trace = new TraceEntry[1024];
+    private readonly ExecutionEvent?[] traceEvents = new ExecutionEvent?[1024];
     private int traceStart, traceCount;
     private InputRequest? input;
     private string hoveredButton = "";
@@ -169,6 +170,7 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
     {
         int at = (traceStart + traceCount) & 1023;
         trace[at] = new(kind, epoch, instructions, detail, currentSpan, source, request, document.Revision);
+        traceEvents[at] = null;
         if (traceCount == trace.Length) traceStart = (traceStart + 1) & 1023;
         else traceCount++;
     }
@@ -179,8 +181,9 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
             var result = ImmutableArray.CreateBuilder<ExecutionEvent>(traceCount);
             for (int i = 0; i < traceCount; i++)
             {
-                ref readonly var e = ref trace[(traceStart + i) & 1023];
-                result.Add(new(e.Kind, e.Epoch, e.Instructions, e.Detail, e.Span, e.InputSource, e.RequestId, e.DocumentRevision));
+                int at = (traceStart + i) & 1023;
+                ref readonly var e = ref trace[at];
+                result.Add(traceEvents[at] ??= new(e.Kind, e.Epoch, e.Instructions, e.Detail, e.Span, e.InputSource, e.RequestId, e.DocumentRevision));
             }
             return result.MoveToImmutable();
         }
@@ -190,10 +193,19 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
         int count = traceCount, kept = 0;
         for (int i = 0; i < count; i++)
         {
-            var entry = trace[(traceStart + i) & 1023];
-            if (entry.Kind != TraceKind.Debug) trace[(traceStart + kept++) & 1023] = entry;
+            int from = (traceStart + i) & 1023;
+            var entry = trace[from];
+            if (entry.Kind != TraceKind.Debug)
+            {
+                int to = (traceStart + kept++) & 1023;
+                trace[to] = entry; traceEvents[to] = traceEvents[from];
+            }
         }
-        for (int i = kept; i < count; i++) trace[(traceStart + i) & 1023] = default;
+        for (int i = kept; i < count; i++)
+        {
+            int at = (traceStart + i) & 1023;
+            trace[at] = default; traceEvents[at] = null;
+        }
         traceCount = kept;
     }
     private void Push(FunctionDescriptor descriptor, ReadOnlySpan<Operand> args, int mode, int? stackBase = null)

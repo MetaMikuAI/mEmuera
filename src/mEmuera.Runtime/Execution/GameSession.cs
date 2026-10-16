@@ -102,7 +102,10 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
     public int CachedFunctionCount => compiled.Count;
     private readonly DocumentBuilder document = new();
     private readonly List<Diagnostic> diagnostics = [];
-    private readonly Queue<ExecutionEvent> trace = new(1024);
+    private readonly record struct TraceEntry(TraceKind Kind, long Epoch, long Instructions, string Detail, SourceSpan? Span,
+        string? InputSource, long? RequestId, long DocumentRevision);
+    private readonly TraceEntry[] trace = new TraceEntry[1024];
+    private int traceStart, traceCount;
     private InputRequest? input;
     private string hoveredButton = "";
     bool IBuiltinContext.SkipDisplay { get; set; }
@@ -163,16 +166,35 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
         return cell;
     }
     private void Log(TraceKind kind, string detail, string? source = null, long? request = null)
-    { if (trace.Count == 1024) trace.Dequeue(); trace.Enqueue(new(kind, epoch, instructions, detail, currentSpan, source, request, document.Revision)); }
-    public ImmutableArray<ExecutionEvent> Trace => trace.ToImmutableArray();
+    {
+        int at = (traceStart + traceCount) & 1023;
+        trace[at] = new(kind, epoch, instructions, detail, currentSpan, source, request, document.Revision);
+        if (traceCount == trace.Length) traceStart = (traceStart + 1) & 1023;
+        else traceCount++;
+    }
+    public ImmutableArray<ExecutionEvent> Trace
+    {
+        get
+        {
+            var result = ImmutableArray.CreateBuilder<ExecutionEvent>(traceCount);
+            for (int i = 0; i < traceCount; i++)
+            {
+                ref readonly var e = ref trace[(traceStart + i) & 1023];
+                result.Add(new(e.Kind, e.Epoch, e.Instructions, e.Detail, e.Span, e.InputSource, e.RequestId, e.DocumentRevision));
+            }
+            return result.MoveToImmutable();
+        }
+    }
     void IBuiltinContext.DebugClear()
     {
-        int count = trace.Count;
+        int count = traceCount, kept = 0;
         for (int i = 0; i < count; i++)
         {
-            var entry = trace.Dequeue();
-            if (entry.Kind != TraceKind.Debug) trace.Enqueue(entry);
+            var entry = trace[(traceStart + i) & 1023];
+            if (entry.Kind != TraceKind.Debug) trace[(traceStart + kept++) & 1023] = entry;
         }
+        for (int i = kept; i < count; i++) trace[(traceStart + i) & 1023] = default;
+        traceCount = kept;
     }
     private void Push(FunctionDescriptor descriptor, ReadOnlySpan<Operand> args, int mode, int? stackBase = null)
     {

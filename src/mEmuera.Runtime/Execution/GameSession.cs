@@ -776,6 +776,17 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
                 stack.Add(new(default, reference with { Index = next })); break;
             }
             case Op.Jump: frame.Pc = instruction.Number; break;
+            case Op.ForLocalCondition:
+            {
+                var loop = instruction.LoopCondition ?? throw new ScriptException("BYTECODE", "循环条件缺少变量位置");
+                if ((uint)loop.CounterSlot >= (uint)frame.LocalSlots.Length || (uint)loop.BoundSlot >= (uint)frame.LocalSlots.Length
+                    || (uint)loop.StepSlot >= (uint)frame.LocalSlots.Length) throw new ScriptException("BYTECODE", "局部变量位置无效");
+                long step = frame.LocalSlots[loop.StepSlot].Read(0).AsInt();
+                bool active = step > 0 ? frame.LocalSlots[loop.CounterSlot].Read(loop.CounterIndex).AsInt() < frame.LocalSlots[loop.BoundSlot].Read(0).AsInt()
+                    : step < 0 && frame.LocalSlots[loop.CounterSlot].Read(loop.CounterIndex).AsInt() > frame.LocalSlots[loop.BoundSlot].Read(0).AsInt();
+                Put(new(active ? 1L : 0L));
+                break;
+            }
             case Op.SwitchLocalString:
                 if ((uint)instruction.LocalSlot >= (uint)frame.LocalSlots.Length) throw new ScriptException("BYTECODE", "局部变量位置无效");
                 frame.Pc = instruction.StringTargets!.GetValueOrDefault(frame.LocalSlots[instruction.LocalSlot].Read(0).AsString(), instruction.Number);

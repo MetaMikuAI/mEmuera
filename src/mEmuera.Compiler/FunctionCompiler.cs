@@ -678,7 +678,18 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
                 string bound = Temporary(), step = Temporary(), initial = Temporary();
                 Assign(Var(initial), initialValue); Assign(variable, Var(initial)); Assign(Var(bound), endValue); Assign(Var(step), stepValue);
                 int start = code.Count;
-                Expression(new Conditional(new Binary(">", Var(step), new Literal(new(0L))), new Binary("<", variable, Var(bound)),
+                int counterSlot = locals.FindIndex(v => v.Name == variable.Name);
+                var counterSpec = Resolve(variable.Name);
+                if (counterSlot >= 0 && !counterSpec.Reference && counterSpec.Rank == 1
+                    && !descriptor.Parameters.Any(p => p.Name == variable.Name && p.Reference)
+                    && variable.Indices.Count == 1 && variable.Indices[0] is Literal { Value.Kind: ValueKind.Integer } counterIndex
+                    && counterIndex.Value.Integer >= 0 && counterIndex.Value.Integer < counterSpec.Length)
+                {
+                    int at = Emit(Op.ForLocalCondition);
+                    code[at] = code[at] with { LoopCondition = new(counterSlot, (int)counterIndex.Value.Integer,
+                        locals.FindIndex(v => v.Name == bound), locals.FindIndex(v => v.Name == step)) };
+                }
+                else Expression(new Conditional(new Binary(">", Var(step), new Literal(new(0L))), new Binary("<", variable, Var(bound)),
                     new Conditional(new Binary("<", Var(step), new Literal(new(0L))), new Binary(">", variable, Var(bound)), new Literal(new(0L)))));
                 blocks.Push(new("FOR", start) { False = Emit(Op.JumpFalse), Counter = variable, Bound = bound, Step = step }); break;
             }

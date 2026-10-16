@@ -202,14 +202,16 @@ public enum Op
 {
     Constant, Load, Reference, Store, Duplicate, Pop, Unary, Binary, Jump, JumpFalse, JumpTrue, AdvanceReference,
     Call, DynamicCall, Return, Emit, Button, Input, ClearLine, Color, Save, LoadSave, BeginTitle, Quit, LineCount, Builtin, StoreArray,
-    StringCall, Throw, ReadVariable, ReadCharacter, ReadLocal, ReadLocalConstant, StoreLocalConstant, SwitchLocalString, SwitchLocalInteger
+    StringCall, Throw, ReadVariable, ReadCharacter, ReadLocal, ReadLocalConstant, StoreLocalConstant, SwitchLocalString, SwitchLocalInteger, ForLocalCondition
 }
+public sealed record LocalLoopCondition(int CounterSlot, int CounterIndex, int BoundSlot, int StepSlot);
 public sealed record Instruction(Op Op, string Text, int Number, EraValue Value, SourceSpan Span)
 {
     public VariableDescriptor? ResolvedVariable { get; init; }
     public int LocalSlot { get; init; } = -1;
     public ImmutableDictionary<string, int>? StringTargets { get; init; }
     public ImmutableDictionary<long, int>? IntegerTargets { get; init; }
+    public LocalLoopCondition? LoopCondition { get; init; }
 }
 public sealed record CompiledFunction(FunctionDescriptor Descriptor, ImmutableArray<Instruction> Code);
 public sealed record CompileResult(CompiledFunction? Function, ImmutableArray<Diagnostic> Diagnostics)

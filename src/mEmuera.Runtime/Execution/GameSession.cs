@@ -587,6 +587,24 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
         frame.LocalSlots[loop.CounterSlot].Write(loop.CounterIndex, new(end));
         return true;
     }
+    private bool TryCopyCharacterLoop(Frame frame, LocalLoopCondition loop, CharacterLoopCopy copy)
+    {
+        long start = frame.LocalSlots[loop.CounterSlot].Read(loop.CounterIndex).AsInt();
+        long end = frame.LocalSlots[loop.BoundSlot].Read(0).AsInt();
+        if (start < 0 || end <= start || end > copy.Destination.Length - copy.DestinationOffset
+            || end > copy.Source.Length - copy.SourceOffset || end - start > 256) return false;
+        long character = frame.LocalSlots[copy.CharacterSlot].Read(copy.CharacterIndex).AsInt();
+        if (character < 0 || character >= characters.Count) return false;
+        var destination = characters.ValuesAt(character, copy.Destination.Name);
+        var source = characters.ValuesAt(character, copy.Source.Name);
+        int targetStart = (int)start + copy.DestinationOffset, sourceStart = (int)start + copy.SourceOffset, count = (int)(end - start);
+        if (targetStart + count > destination.Length || sourceStart + count > source.Length) return false;
+        // 向高下标重叠写入会影响后续源值，保留原循环的逐项传播行为。
+        if (ReferenceEquals(destination, source) && targetStart > sourceStart && targetStart < sourceStart + count) return false;
+        Array.Copy(source, sourceStart, destination, targetStart, count);
+        frame.LocalSlots[loop.CounterSlot].Write(loop.CounterIndex, new(end));
+        return true;
+    }
     private bool allowDoTrain;
     void IBuiltinContext.DoTrain(long command)
     {
@@ -810,7 +828,8 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
                 long step = frame.LocalSlots[loop.StepSlot].Read(0).AsInt();
                 bool active = step > 0 ? frame.LocalSlots[loop.CounterSlot].Read(loop.CounterIndex).AsInt() < frame.LocalSlots[loop.BoundSlot].Read(0).AsInt()
                     : step < 0 && frame.LocalSlots[loop.CounterSlot].Read(loop.CounterIndex).AsInt() > frame.LocalSlots[loop.BoundSlot].Read(0).AsInt();
-                if (!active || step == 1 && loop.Fill is { } fill && TryFillCharacterLoop(frame, loop, fill)) frame.Pc = instruction.Number;
+                if (!active || step == 1 && (loop.Fill is { } fill && TryFillCharacterLoop(frame, loop, fill)
+                    || loop.Copy is { } copy && TryCopyCharacterLoop(frame, loop, copy))) frame.Pc = instruction.Number;
                 break;
             }
             case Op.SwitchLocalString:

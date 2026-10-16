@@ -56,8 +56,8 @@ public sealed partial class CompilationWorkspace(IGameSource source, IBuiltinReg
     public double ValidationMilliseconds { get; private set; }
     public double SourceReadMilliseconds { get; private set; }
     public long EstimatedCacheBytes => cache.Values.Sum(f => f.Code.Sum(i => 104L + i.Text.Length * 2L + (i.Value.Text?.Length ?? 0) * 2L
-        + (i.StringTargets?.Sum(p => 64L + p.Key.Length * 2L) ?? 0) + (i.IntegerTargets?.Count ?? 0) * 64L + (i.LoopCondition is null ? 0 : 40)
-        + (i.LoopCondition?.Fill is null ? 0 : 64)))
+        + (i.StringTargets?.Sum(p => 64L + p.Key.Length * 2L) ?? 0) + (i.IntegerTargets?.Count ?? 0) * 64L + (i.LoopCondition is null ? 0 : 48)
+        + (i.LoopCondition?.Fill is null ? 0 : 64) + (i.LoopCondition?.Copy is null ? 0 : 48)))
         + texts.Values.Sum(t => t.Text.Length * 2L) + expandedTexts.Values.Sum(text => text.Lines.Sum(l => 96L + l.Line.Text.Length * 2L));
     public ValueTask<IndexResult> IndexAsync(IGameSource gameSource, CompileOptions options, CancellationToken ct = default) => IndexAsync(gameSource, options, null, ct);
     /// <param name="progress">索引脚本的进度：已完成数、总数。</param>

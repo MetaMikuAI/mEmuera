@@ -205,7 +205,10 @@ public enum Op
     StringCall, Throw, ReadVariable, ReadCharacter, ReadLocal, ReadLocalConstant, StoreLocalConstant, SwitchLocalString, SwitchLocalInteger, JumpForLocalEnd, IncrementLocal
 }
 public sealed record CharacterLoopFill(VariableDescriptor Variable, int CharacterSlot, int CharacterIndex, EraValue Value);
-public sealed record LocalLoopCondition(int CounterSlot, int CounterIndex, int BoundSlot, int StepSlot, CharacterLoopFill? Fill = null);
+public sealed record CharacterLoopCopy(VariableDescriptor Destination, VariableDescriptor Source, int CharacterSlot, int CharacterIndex,
+    int DestinationOffset, int SourceOffset);
+public sealed record LocalLoopCondition(int CounterSlot, int CounterIndex, int BoundSlot, int StepSlot,
+    CharacterLoopFill? Fill = null, CharacterLoopCopy? Copy = null);
 public sealed record Instruction(Op Op, string Text, int Number, EraValue Value, SourceSpan Span)
 {
     public VariableDescriptor? ResolvedVariable { get; init; }

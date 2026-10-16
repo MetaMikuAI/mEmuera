@@ -400,6 +400,46 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
         code[start] = code[start] with { LoopCondition = loop with
             { Fill = new(variable, character.LocalSlot, character.Number, value.Value) } };
     }
+    private void OptimizeCharacterCopy(Block block)
+    {
+        int start = block.Start, at = start + 1;
+        if (code[start] is not { Op: Op.JumpForLocalEnd, LoopCondition: { } loop } || code.Count - start < 8) return;
+        var character = code[at++];
+        if (character.Op != Op.ReadLocalConstant
+            || character.LocalSlot == loop.CounterSlot && character.Number == loop.CounterIndex
+            || !ReadIndex(out int destinationOffset) || at >= code.Count) return;
+        var destination = code[at++];
+        if (destination.Op != Op.Reference || destination.Number != 2 || destination.Value.Integer != 1
+            || at >= code.Count || code[at] is not { Op: Op.ReadLocalConstant } sourceCharacter
+            || sourceCharacter.LocalSlot != character.LocalSlot || sourceCharacter.Number != character.Number) return;
+        at++;
+        if (!ReadIndex(out int sourceOffset) || at + 2 != code.Count) return;
+        var source = code[at++];
+        if (source.Op != Op.ReadCharacter || source.Number != 2 || source.Value.Integer != 1 || code[at].Op != Op.Store
+            || locals.Any(v => v.Name == destination.Text) || descriptor.Parameters.Any(p => p.Name == destination.Text)) return;
+        var target = Resolve(destination.Text); var origin = source.ResolvedVariable;
+        if (target is not { Scope: VariableScope.Character, Rank: 1, CharacterScalar: false, ReadOnly: false, Reference: false }
+            || origin is not { Scope: VariableScope.Character, Rank: 1, CharacterScalar: false, Reference: false }
+            || target.Kind != origin.Kind) return;
+        code[start] = code[start] with { LoopCondition = loop with
+            { Copy = new(target, origin, character.LocalSlot, character.Number, destinationOffset, sourceOffset) } };
+
+        bool Counter(Instruction instruction) => instruction.Op == Op.ReadLocalConstant
+            && instruction.LocalSlot == loop.CounterSlot && instruction.Number == loop.CounterIndex;
+        bool ReadIndex(out int offset)
+        {
+            offset = 0;
+            if (at >= code.Count) return false;
+            if (at + 2 < code.Count && code[at + 2] is { Op: Op.Binary, Text: "+" })
+            {
+                var constant = Counter(code[at]) ? code[at + 1] : Counter(code[at + 1]) ? code[at] : null;
+                if (constant is not { Op: Op.Constant, Value.Kind: ValueKind.Integer }
+                    || constant.Value.Integer < 0 || constant.Value.Integer > int.MaxValue) return false;
+                offset = (int)constant.Value.Integer; at += 3; return true;
+            }
+            return Counter(code[at++]);
+        }
+    }
     private void Call(string name, IReadOnlyList<Expr> args, int mode)
     {
         var target = index.Find(name) ?? throw new ScriptException("UNDEFINED_FUNCTION", "未定义函数: " + name, span);
@@ -723,7 +763,7 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
             {
                 var block = Top(name == "NEXT" ? "FOR" : "WHILE"); blocks.Pop();
                 foreach (int at in block.Continues) Patch(at, code.Count);
-                if (block.Kind == "FOR") { OptimizeCharacterFill(block); Increment(block.Counter!, Var(block.Step)); }
+                if (block.Kind == "FOR") { OptimizeCharacterFill(block); OptimizeCharacterCopy(block); Increment(block.Counter!, Var(block.Step)); }
                 Emit(Op.Jump, number: block.Start); Patch(block.False, code.Count); foreach (int at in block.Ends) Patch(at, code.Count); break;
             }
             case "BREAK": case "CONTINUE":

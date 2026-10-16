@@ -17,7 +17,7 @@ internal static class BytecodeValidator
             depths.Add(item.Pc, item.Depth);
             int required = instruction.Op switch
             {
-                Op.Store or Op.Binary or Op.Button or Op.Save => 2,
+                Op.Store or Op.Binary or Op.Button or Op.Save or Op.JumpComparisonFalse => 2,
                 Op.Input when instruction.Text == "TINPUT" => 2,
                 Op.Call or Op.Return or Op.Builtin => instruction.Number,
                 Op.DynamicCall or Op.StoreArray => instruction.Number + 1,
@@ -39,7 +39,7 @@ internal static class BytecodeValidator
                 continue;
             }
             if (instruction.Op is Op.Return or Op.Quit or Op.BeginTitle || instruction.Op == Op.Call && instruction.Value.Integer == 2) continue;
-            if (instruction.Op is Op.Jump or Op.JumpFalse or Op.JumpTrue or Op.JumpForLocalEnd or Op.JumpMissingArgument or Op.JumpValueArgument) queue.Enqueue((instruction.Number, next));
+            if (instruction.Op is Op.Jump or Op.JumpFalse or Op.JumpTrue or Op.JumpForLocalEnd or Op.JumpMissingArgument or Op.JumpValueArgument or Op.JumpComparisonFalse) queue.Enqueue((instruction.Number, next));
             if (instruction.Op != Op.Jump) queue.Enqueue((item.Pc + 1, next));
         }
         return [];

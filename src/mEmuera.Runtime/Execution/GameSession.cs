@@ -853,6 +853,12 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
                 frame.Pc = instruction.IntegerTargets!.GetValueOrDefault(frame.LocalSlots[instruction.LocalSlot].Read(0).AsInt(), instruction.Number);
                 break;
             case Op.JumpFalse: if (Value().AsInt() == 0) frame.Pc = instruction.Number; break;
+            case Op.JumpComparisonFalse:
+            {
+                var right = Value(); var left = Value();
+                if (Binary(instruction.Text, left, right).AsInt() == 0) frame.Pc = instruction.Number;
+                break;
+            }
             case Op.JumpTrue: if (Value().AsInt() != 0) frame.Pc = instruction.Number; break;
             case Op.Call: case Op.DynamicCall:
             {

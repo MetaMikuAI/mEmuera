@@ -202,7 +202,7 @@ public enum Op
 {
     Constant, Load, Reference, Store, Duplicate, Pop, Unary, Binary, Jump, JumpFalse, JumpTrue, AdvanceReference,
     Call, DynamicCall, Return, Emit, Button, Input, ClearLine, Color, Save, LoadSave, BeginTitle, Quit, LineCount, Builtin, StoreArray,
-    StringCall, Throw, ReadVariable, ReadCharacter, ReadLocal, ReadLocalConstant, StoreLocalConstant, SwitchLocalString, SwitchLocalInteger, JumpForLocalEnd, IncrementLocal, JumpMissingArgument, JumpValueArgument
+    StringCall, Throw, ReadVariable, ReadCharacter, ReadLocal, ReadLocalConstant, StoreLocalConstant, SwitchLocalString, SwitchLocalInteger, JumpForLocalEnd, IncrementLocal, JumpMissingArgument, JumpValueArgument, JumpComparisonFalse
 }
 public sealed record CharacterLoopFill(VariableDescriptor Variable, int CharacterSlot, int CharacterIndex, EraValue Value);
 public sealed record CharacterLoopCopy(VariableDescriptor Destination, VariableDescriptor Source, int CharacterSlot, int CharacterIndex,

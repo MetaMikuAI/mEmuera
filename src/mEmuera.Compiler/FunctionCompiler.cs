@@ -352,6 +352,18 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
     }
     private void Assign(Variable target, Expr value)
     { var store = PrepareStore(target); Expression(value); Store(store); }
+    private int ConditionFalse(string text)
+    {
+        var expression = Parse(text);
+        if (Kind(expression) != ValueKind.Integer) throw new ScriptException("TYPE", "表达式类型不匹配", expression.Span ?? span);
+        if (expression is Binary { Operator: "==" or "!=" or "<" or ">" or "<=" or ">=" } comparison)
+        {
+            Expression(comparison.Left); Expression(comparison.Right);
+            return Emit(Op.JumpComparisonFalse, comparison.Operator);
+        }
+        Expression(expression);
+        return Emit(Op.JumpFalse);
+    }
     private Instruction? PrepareStore(Variable target)
     {
         var specification = Resolve(target.Name);
@@ -622,11 +634,11 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
             {
                 var saved = Top("NOSKIP"); blocks.Pop(); Expression(Var(saved.Variable)); Builtin("$SKIP_CONTROL"); break;
             }
-            case "IF": TypedExpression(rest, ValueKind.Integer); blocks.Push(new("IF", code.Count) { False = Emit(Op.JumpFalse) }); break;
+            case "IF": { int branch = ConditionFalse(rest); blocks.Push(new("IF", branch) { False = branch }); break; }
             case "ELSEIF":
             {
                 var block = Top("IF"); if (block.False < 0) throw new ScriptException("BLOCK", "ELSE 后不能 ELSEIF", span);
-                block.Ends.Add(Emit(Op.Jump)); Patch(block.False, code.Count); TypedExpression(rest, ValueKind.Integer); block.False = Emit(Op.JumpFalse); break;
+                block.Ends.Add(Emit(Op.Jump)); Patch(block.False, code.Count); block.False = ConditionFalse(rest); break;
             }
             case "ELSE":
             {
@@ -635,7 +647,7 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
             }
             case "ENDIF":
             { var block = Top("IF"); blocks.Pop(); if (block.False >= 0) Patch(block.False, code.Count); foreach (int at in block.Ends) Patch(at, code.Count); break; }
-            case "SIF": TypedExpression(args.Count == 2 && args[1].Length == 0 ? args[0] : rest, ValueKind.Integer); sif = Emit(Op.JumpFalse); break;
+            case "SIF": sif = ConditionFalse(args.Count == 2 && args[1].Length == 0 ? args[0] : rest); break;
             case "SELECTCASE":
             {
                 var selector = Parse(rest); var kind = Kind(selector); string temp = Temporary(kind); Assign(Var(temp), selector);
@@ -719,7 +731,7 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
                 break;
             }
             case "WHILE":
-            { int start = code.Count; TypedExpression(rest, ValueKind.Integer); blocks.Push(new("WHILE", start) { False = Emit(Op.JumpFalse) }); break; }
+            { int start = code.Count; int branch = ConditionFalse(rest); blocks.Push(new("WHILE", start) { False = branch }); break; }
             case "DO": blocks.Push(new("DO", code.Count)); break;
             case "LOOP":
             {

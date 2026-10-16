@@ -131,16 +131,32 @@ public sealed class DirectoryGameSource(string root, string encoding = "utf-8", 
     {
         ct.ThrowIfCancellationRequested();
         if (source.Hash.StartsWith("metadata:", StringComparison.Ordinal)) await ValidateAsync(source, ct);
-        byte[] bytes;
-        if (!snapshot.TryGetValue(source, out bytes!))
+        byte[]? rented = null;
+        try
         {
-            bytes = await File.ReadAllBytesAsync(GamePathResolver.Resolve(root, source.Path), ct);
-            Interlocked.Add(ref readBytes, bytes.Length); Interlocked.Increment(ref readFiles);
+            byte[] bytes;
+            int length;
+            if (snapshot.TryGetValue(source, out bytes!)) length = bytes.Length;
+            else
+            {
+                await using var stream = new FileStream(GamePathResolver.Resolve(root, source.Path), FileMode.Open,
+                    FileAccess.Read, FileShare.Read, 1, FileOptions.Asynchronous | FileOptions.SequentialScan);
+                length = checked((int)stream.Length);
+                // 限制复用缓冲区的大小，避免大型脚本长期占用池内存。
+                if (length <= 1024 * 1024) bytes = rented = System.Buffers.ArrayPool<byte>.Shared.Rent(Math.Max(1, length));
+                else bytes = new byte[length];
+                try { await stream.ReadExactlyAsync(bytes.AsMemory(0, length), ct); }
+                catch (EndOfStreamException) { throw new ScriptException("SOURCE_CHANGED", "源文件已改变，需要重建索引", new(source, 0, 0, 1)); }
+                if (await stream.ReadAsync(bytes.AsMemory(0, Math.Min(1, bytes.Length)), ct) != 0)
+                    throw new ScriptException("SOURCE_CHANGED", "源文件已改变，需要重建索引", new(source, 0, 0, 1));
+                Interlocked.Add(ref readBytes, length); Interlocked.Increment(ref readFiles);
+            }
+            string hash = Convert.ToHexString(SHA256.HashData(bytes.AsSpan(0, length)));
+            if (!source.Hash.StartsWith("metadata:", StringComparison.Ordinal) && hash != source.Hash) throw new ScriptException("SOURCE_CHANGED", "源文件已改变，需要重建索引", new(source, 0, 0, 1));
+            int offset = bytes.AsSpan(0, length).StartsWith(new byte[] { 239, 187, 191 }) ? 3 : 0;
+            return new(source, (offset == 3 ? new UTF8Encoding(false, true) : decoder).GetString(bytes, offset, length - offset));
         }
-        string hash = Convert.ToHexString(SHA256.HashData(bytes));
-        if (!source.Hash.StartsWith("metadata:", StringComparison.Ordinal) && hash != source.Hash) throw new ScriptException("SOURCE_CHANGED", "源文件已改变，需要重建索引", new(source, 0, 0, 1));
-        int offset = bytes.AsSpan().StartsWith(new byte[] { 239, 187, 191 }) ? 3 : 0;
-        return new(source, (offset == 3 ? new UTF8Encoding(false, true) : decoder).GetString(bytes, offset, bytes.Length - offset));
+        finally { if (rented is not null) System.Buffers.ArrayPool<byte>.Shared.Return(rented); }
     }
     public async ValueTask ValidateAsync(SourceId source, CancellationToken ct = default)
     {

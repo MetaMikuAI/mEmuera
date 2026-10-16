@@ -261,6 +261,13 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
     private void Reference(Variable variable, bool read = false)
     {
         var specification = Resolve(variable.Name);
+        if (read && !variable.ExplicitIndices
+            && specification is { Scope: VariableScope.Global, ReadOnly: true, Reference: false, Saved: false, GlobalSaved: false, Length: 1 }
+            && specification.Initial.Length == 1 && !descriptor.Parameters.Any(p => p.Name == variable.Name))
+        {
+            Emit(Op.Constant, value: specification.Initial[0]);
+            return;
+        }
         int count = variable.Indices.Count;
         int localSlot = read && !specification.Reference && !descriptor.Parameters.Any(p => p.Name == variable.Name && p.Reference)
             ? locals.FindIndex(v => v.Name == variable.Name) : -1;

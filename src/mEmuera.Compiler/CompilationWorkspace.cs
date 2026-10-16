@@ -53,6 +53,8 @@ public sealed partial class CompilationWorkspace(IGameSource source, IBuiltinReg
     public long CacheMisses { get; private set; }
     public bool IndexCacheHit { get; private set; }
     public double CompileMilliseconds { get; private set; }
+    public double ValidationMilliseconds { get; private set; }
+    public double SourceReadMilliseconds { get; private set; }
     public long EstimatedCacheBytes => cache.Values.Sum(f => f.Code.Sum(i => 104L + i.Text.Length * 2L + (i.Value.Text?.Length ?? 0) * 2L
         + (i.StringTargets?.Sum(p => 64L + p.Key.Length * 2L) ?? 0)))
         + texts.Values.Sum(t => t.Text.Length * 2L) + expandedTexts.Values.Sum(text => text.Lines.Sum(l => 96L + l.Line.Text.Length * 2L));
@@ -87,8 +89,7 @@ public sealed partial class CompilationWorkspace(IGameSource source, IBuiltinReg
         try
         {
             ObjectDisposedException.ThrowIf(disposed, this);
-            await source.ValidateAsync(dependencies, ct);
-            await source.ValidateAsync(payload.Caller.Span.Source, ct);
+            await ValidateSourcesAsync(payload.Caller.Span.Source, ct);
             return new FunctionCompiler(index ?? throw new InvalidOperationException("尚未索引"), payload.Caller, builtins).CompileVariable(payload);
         }
         catch (ScriptException e) { return new(null, [e.Diagnostic]); }
@@ -107,11 +108,12 @@ public sealed partial class CompilationWorkspace(IGameSource source, IBuiltinReg
             if (descriptor is null) return new(null, [new("FUNCTION", "函数不存在")]);
             // 已编译函数在本次会话内复用；脚本修改在重新进入游戏后生效。
             if (cache.TryGetValue(functionId, out var hit)) { CacheHits++; return new(hit, []); }
-            await source.ValidateAsync(dependencies, ct);
-            await source.ValidateAsync(descriptor.Span.Source, ct);
+            await ValidateSourcesAsync(descriptor.Span.Source, ct);
             if (!texts.TryGetValue(descriptor.Span.Source, out var text))
             {
-                text = await source.ReadAsync(descriptor.Span.Source, ct);
+                long readStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+                try { text = await source.ReadAsync(descriptor.Span.Source, ct); }
+                finally { SourceReadMilliseconds += System.Diagnostics.Stopwatch.GetElapsedTime(readStarted).TotalMilliseconds; }
                 while (texts.Count >= Math.Max(1, program.Options.SourceCacheCapacity))
                 {
                     var removed = textOrder.Dequeue(); texts.Remove(removed);
@@ -137,6 +139,16 @@ public sealed partial class CompilationWorkspace(IGameSource source, IBuiltinReg
         }
         catch (ScriptException e) { return new(null, [e.Diagnostic]); }
         finally { gate.Release(); }
+    }
+    private async ValueTask ValidateSourcesAsync(SourceId caller, CancellationToken ct)
+    {
+        long started = System.Diagnostics.Stopwatch.GetTimestamp();
+        try
+        {
+            await source.ValidateAsync(dependencies, ct);
+            await source.ValidateAsync(caller, ct);
+        }
+        finally { ValidationMilliseconds += System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds; }
     }
 }
 

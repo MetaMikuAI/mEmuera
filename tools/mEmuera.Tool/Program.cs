@@ -166,8 +166,11 @@ static async Task<int> MainAsync(string[] args)
         var interactionAllocatedBytes = new List<long>();
         var interactionCompilations = new List<long>();
         var interactionCompileMilliseconds = new List<double>();
+        var interactionValidationMilliseconds = new List<double>();
+        var interactionSourceReadMilliseconds = new List<double>();
         long compilationStart = 0;
         double compileTimeStart = 0;
+        double validationTimeStart = 0, sourceReadTimeStart = 0;
         long progressAt = 0;
         var compilationRequests = args.Contains("--profile-compilation") ? new Dictionary<string, int>() : null;
         var dynamicCompilationRequests = compilationRequests is null ? null : new Dictionary<string, int>();
@@ -213,6 +216,8 @@ static async Task<int> MainAsync(string[] args)
                 interactionCpuMilliseconds.Add((measuredProcess.TotalProcessorTime - cpuStart).TotalMilliseconds);
                 interactionCompilations.Add(workspace.CacheMisses - compilationStart);
                 interactionCompileMilliseconds.Add(workspace.CompileMilliseconds - compileTimeStart);
+                interactionValidationMilliseconds.Add(workspace.ValidationMilliseconds - validationTimeStart);
+                interactionSourceReadMilliseconds.Add(workspace.SourceReadMilliseconds - sourceReadTimeStart);
                 interactionDynamicCompilations.Add(dynamicCompilations - dynamicCompilationStart);
                 interactionDynamicServiceMilliseconds.Add(dynamicServiceMilliseconds - dynamicServiceTimeStart);
                 interactionStart = null;
@@ -253,6 +258,8 @@ static async Task<int> MainAsync(string[] args)
             allocationStart = GC.GetTotalAllocatedBytes(false);
             compilationStart = workspace.CacheMisses;
             compileTimeStart = workspace.CompileMilliseconds;
+            validationTimeStart = workspace.ValidationMilliseconds;
+            sourceReadTimeStart = workspace.SourceReadMilliseconds;
             dynamicCompilationStart = dynamicCompilations;
             dynamicServiceTimeStart = dynamicServiceMilliseconds;
             if (action.ExpectVariable is { } variable && snapshot.Variables[variable][0].ToString() != action.ExpectValue) throw new ScriptException("REPLAY_ASSERT", "变量断言失败: " + variable);
@@ -293,6 +300,7 @@ static async Task<int> MainAsync(string[] args)
                 cpuMeasurement = "process-wide CPU time including background threads; short interactions may be below OS timer resolution",
                 interactionCpuMilliseconds, interactionGen0Collections, interactionGen1Collections, interactionGen2Collections,
                 interactionCompilations, interactionCompileMilliseconds,
+                interactionValidationMilliseconds, interactionSourceReadMilliseconds,
                 peakRssBytes = System.Diagnostics.Process.GetCurrentProcess().PeakWorkingSet64, workspace.CacheHits, workspace.CacheMisses,
                 workspace.SourceCacheHits, workspace.CachedSources, workspace.CompileMilliseconds, workspace.EstimatedCacheBytes,
                 source.ReadBytes, source.ReadFiles, indexed.Index.Identity, final.Mode, characterCount = final.Characters.Length,

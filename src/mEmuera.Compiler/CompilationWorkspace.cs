@@ -109,17 +109,22 @@ public sealed partial class CompilationWorkspace(IGameSource source, IBuiltinReg
             // 已编译函数在本次会话内复用；脚本修改在重新进入游戏后生效。
             if (cache.TryGetValue(functionId, out var hit)) { CacheHits++; return new(hit, []); }
             await ValidateSourcesAsync(descriptor.Span.Source, ct);
-            if (!texts.TryGetValue(descriptor.Span.Source, out var text))
+            bool cachedText = texts.TryGetValue(descriptor.Span.Source, out var text);
+            // 前缀不足时补读全文，避免同一缓存条目反复扩展和重新预处理。
+            if (!cachedText || (!text!.IsComplete && text.Text.Length < descriptor.BodyEnd))
             {
                 long readStarted = System.Diagnostics.Stopwatch.GetTimestamp();
-                try { text = await source.ReadAsync(descriptor.Span.Source, ct); }
+                try { text = cachedText ? await source.ReadAsync(descriptor.Span.Source, ct)
+                    : await source.ReadPrefixAsync(descriptor.Span.Source, descriptor.BodyEnd, ct); }
                 finally { SourceReadMilliseconds += System.Diagnostics.Stopwatch.GetElapsedTime(readStarted).TotalMilliseconds; }
-                while (texts.Count >= Math.Max(1, program.Options.SourceCacheCapacity))
+                while (!cachedText && texts.Count >= Math.Max(1, program.Options.SourceCacheCapacity))
                 {
                     var removed = textOrder.Dequeue(); texts.Remove(removed);
                     if (expandedTexts.Remove(removed, out var old)) old.Dispose();
                 }
-                texts.Add(text.Id, text); textOrder.Enqueue(text.Id);
+                texts[text.Id] = text;
+                if (!cachedText) textOrder.Enqueue(text.Id);
+                else if (expandedTexts.Remove(text.Id, out var old)) old.Dispose();
             }
             else SourceCacheHits++;
             CacheMisses++;

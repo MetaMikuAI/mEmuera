@@ -127,7 +127,13 @@ public sealed class DirectoryGameSource(string root, string encoding = "utf-8", 
         }
         return new(files.ToImmutable()) { DirectoryOrder = directoryOrder.ToImmutable() };
     }
-    public async ValueTask<SourceText> ReadAsync(SourceId source, CancellationToken ct = default)
+    public ValueTask<SourceText> ReadAsync(SourceId source, CancellationToken ct = default) => ReadCoreAsync(source, null, ct);
+    public ValueTask<SourceText> ReadPrefixAsync(SourceId source, int minimumCharacters, CancellationToken ct = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(minimumCharacters);
+        return ReadCoreAsync(source, Math.Max(16384, minimumCharacters), ct);
+    }
+    private async ValueTask<SourceText> ReadCoreAsync(SourceId source, int? prefixCharacters, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
         if (source.Hash.StartsWith("metadata:", StringComparison.Ordinal)) await ValidateAsync(source, ct);
@@ -154,7 +160,20 @@ public sealed class DirectoryGameSource(string root, string encoding = "utf-8", 
             string hash = Convert.ToHexString(SHA256.HashData(bytes.AsSpan(0, length)));
             if (!source.Hash.StartsWith("metadata:", StringComparison.Ordinal) && hash != source.Hash) throw new ScriptException("SOURCE_CHANGED", "源文件已改变，需要重建索引", new(source, 0, 0, 1));
             int offset = bytes.AsSpan(0, length).StartsWith(new byte[] { 239, 187, 191 }) ? 3 : 0;
-            return new(source, (offset == 3 ? new UTF8Encoding(false, true) : decoder).GetString(bytes, offset, length - offset));
+            Encoding encoding = offset == 3 ? new UTF8Encoding(false, true) : decoder;
+            if (prefixCharacters is > 0 and <= 1048576 && encoding.GetCharCount(bytes, offset, length - offset) > prefixCharacters.Value)
+            {
+                char[] characters = System.Buffers.ArrayPool<char>.Shared.Rent(prefixCharacters.Value + 1);
+                try
+                {
+                    // 多留一个 UTF-16 字符，避免截断请求边界上的代理对。
+                    encoding.GetDecoder().Convert(bytes.AsSpan(offset, length - offset), characters.AsSpan(0, prefixCharacters.Value + 1), true,
+                        out _, out int used, out bool complete);
+                    return new(source, new string(characters, 0, used)) { IsComplete = complete };
+                }
+                finally { System.Buffers.ArrayPool<char>.Shared.Return(characters); }
+            }
+            return new(source, encoding.GetString(bytes, offset, length - offset));
         }
         finally { if (rented is not null) System.Buffers.ArrayPool<byte>.Shared.Return(rented); }
     }

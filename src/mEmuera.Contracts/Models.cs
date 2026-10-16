@@ -37,11 +37,14 @@ public sealed record SourceFile(SourceId Id, long Bytes, string Category)
 { public int DiscoveryOrder { get; init; } = -1; }
 public sealed record SourceManifest(ImmutableArray<SourceFile> Files)
 { public ImmutableArray<string> DirectoryOrder { get; init; } = []; }
-public sealed record SourceText(SourceId Id, string Text);
+public sealed record SourceText(SourceId Id, string Text)
+{ public bool IsComplete { get; init; } = true; }
 public interface IGameSource
 {
     ValueTask<SourceManifest> EnumerateAsync(CancellationToken ct = default);
     ValueTask<SourceText> ReadAsync(SourceId source, CancellationToken ct = default);
+    // 返回至少指定 UTF-16 长度的前缀，或已到达末尾的完整文本。
+    ValueTask<SourceText> ReadPrefixAsync(SourceId source, int minimumCharacters, CancellationToken ct = default) => ReadAsync(source, ct);
     async ValueTask ValidateAsync(SourceId source, CancellationToken ct = default) => await ReadAsync(source, ct);
     async ValueTask ValidateAsync(IReadOnlyList<SourceId> sources, CancellationToken ct = default)
     { foreach (var source in sources) await ValidateAsync(source, ct); }

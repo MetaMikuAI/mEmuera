@@ -189,6 +189,8 @@ public static class Preprocessor
                 value = macros.Expand(value, line.Span, origins);
             yield return new(ReferenceEquals(value, line.Text) ? line : line with { Text = value }, new(line.Span, origins.ToImmutableArray()));
         }
+        // 前缀边界不是文件末尾，预处理区域可能在后续文本中结束。
+        if (!source.IsComplete) yield break;
         if (first is not null) throw new ScriptException("CONTINUATION", "续行块未结束", first.Span);
         if (branches.Count != 0) throw new ScriptException("PREPROCESSOR", "预处理区域未结束", new(source.Id, source.Text.Length, 0, source.Text.Count(c => c == '\n') + 1));
     }

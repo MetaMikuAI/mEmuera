@@ -309,7 +309,15 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
         if (target.Descriptor?.Reference == true) throw new ScriptException("UNBOUND_REFERENCE", "引用变量尚未绑定: " + reference.VariableId);
         return target;
     }
-    private EraValue Read(SlotReference reference) => CellFor(reference).Read(reference.Index);
+    private EraValue Read(SlotReference reference)
+    {
+        if (reference.CharacterId is not { } id) return CellFor(reference).Read(reference.Index);
+        if (reference.Generation != epoch) throw new ScriptException("STALE_REFERENCE", "引用代次已失效");
+        var specification = game.Index.VariablesByName[reference.VariableId];
+        var values = characters.Values(id, reference.VariableId);
+        if ((uint)reference.Index >= (uint)specification.Length) throw new IndexOutOfRangeException();
+        return reference.Index < values.Length ? values[reference.Index] : EraValue.Zero(specification.Kind);
+    }
     int IBuiltinContext.ArrayLength(SlotReference reference) => CellFor(reference).Length;
     void IBuiltinContext.SetResult(long value, int index) { globals["RESULT"].Values[index] = new(value); }
     EraValue IBuiltinContext.TemplateValue(long number, string name, long at)
@@ -480,6 +488,18 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
         => FormatFieldSupport.Pad(text, width, left, Metrics);
     private void Write(SlotReference reference, EraValue value)
     {
+        if (reference.CharacterId is { } id)
+        {
+            if (reference.Generation != epoch) throw new ScriptException("STALE_REFERENCE", "引用代次已失效");
+            var specification = game.Index.VariablesByName[reference.VariableId];
+            var values = characters.Values(id, reference.VariableId);
+            if (specification.ReadOnly) throw new ScriptException("READ_ONLY", "常量不可写入");
+            value = value.ConvertTo(specification.Kind);
+            if ((uint)reference.Index >= (uint)specification.Length) throw new IndexOutOfRangeException();
+            if (reference.Index < values.Length) values[reference.Index] = value;
+            else new Cell(values, specification.Kind, specification).Write(reference.Index, value);
+            return;
+        }
         var cell = CellFor(reference);
         if (cell.Descriptor?.ReadOnly == true) throw new ScriptException("READ_ONLY", "常量不可写入");
         cell.Write(reference.Index, value.ConvertTo(cell.Kind));

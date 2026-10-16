@@ -371,9 +371,16 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
         if (store is null) { Emit(Op.Duplicate); Emit(Op.Load); }
         else Emit(Op.ReadLocalConstant, store.Text, store.Number, localSlot: store.LocalSlot);
     }
-    private void Increment(Variable target, Expr step)
+    private void Increment(Variable target, Variable step)
     {
-        var store = PrepareStore(target); ReadStoreTarget(store); Expression(step); Emit(Op.Binary, "+"); Store(store);
+        var store = PrepareStore(target);
+        int stepSlot = locals.FindIndex(v => v.Name == step.Name);
+        if (store is not null && stepSlot >= 0)
+        {
+            Emit(Op.IncrementLocal, store.Text, store.Number, new EraValue(stepSlot), localSlot: store.LocalSlot);
+            return;
+        }
+        ReadStoreTarget(store); Expression(step); Emit(Op.Binary, "+"); Store(store);
     }
     private void Call(string name, IReadOnlyList<Expr> args, int mode)
     {
@@ -685,13 +692,14 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
                     && variable.Indices.Count == 1 && variable.Indices[0] is Literal { Value.Kind: ValueKind.Integer } counterIndex
                     && counterIndex.Value.Integer >= 0 && counterIndex.Value.Integer < counterSpec.Length)
                 {
-                    int at = Emit(Op.ForLocalCondition);
+                    int at = Emit(Op.JumpForLocalEnd);
                     code[at] = code[at] with { LoopCondition = new(counterSlot, (int)counterIndex.Value.Integer,
                         locals.FindIndex(v => v.Name == bound), locals.FindIndex(v => v.Name == step)) };
                 }
                 else Expression(new Conditional(new Binary(">", Var(step), new Literal(new(0L))), new Binary("<", variable, Var(bound)),
                     new Conditional(new Binary("<", Var(step), new Literal(new(0L))), new Binary(">", variable, Var(bound)), new Literal(new(0L)))));
-                blocks.Push(new("FOR", start) { False = Emit(Op.JumpFalse), Counter = variable, Bound = bound, Step = step }); break;
+                int endJump = code[start].Op == Op.JumpForLocalEnd ? start : Emit(Op.JumpFalse);
+                blocks.Push(new("FOR", start) { False = endJump, Counter = variable, Bound = bound, Step = step }); break;
             }
             case "WEND": case "NEXT":
             {

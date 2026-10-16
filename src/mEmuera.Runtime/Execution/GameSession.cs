@@ -698,6 +698,18 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
                 pendingBuiltinType = ValueKind.Integer;
                 break;
             case Op.Throw: StartThrow(Value().AsString()); break;
+            case Op.IncrementLocal:
+            {
+                int stepSlot = (int)instruction.Value.Integer;
+                if ((uint)instruction.LocalSlot >= (uint)frame.LocalSlots.Length || (uint)stepSlot >= (uint)frame.LocalSlots.Length)
+                    throw new ScriptException("BYTECODE", "局部变量位置无效");
+                var cell = frame.LocalSlots[instruction.LocalSlot];
+                if ((uint)instruction.Number >= (uint)cell.Length) throw new ScriptException("BOUNDS", "数组下标越界: " + instruction.Text);
+                var value = Binary("+", cell.Read(instruction.Number), frame.LocalSlots[stepSlot].Read(0));
+                if (cell.Descriptor?.ReadOnly == true) throw new ScriptException("READ_ONLY", "常量不可写入");
+                cell.Write(instruction.Number, value.ConvertTo(cell.Kind));
+                break;
+            }
             case Op.StoreLocalConstant:
             {
                 var value = Value();
@@ -776,7 +788,7 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
                 stack.Add(new(default, reference with { Index = next })); break;
             }
             case Op.Jump: frame.Pc = instruction.Number; break;
-            case Op.ForLocalCondition:
+            case Op.JumpForLocalEnd:
             {
                 var loop = instruction.LoopCondition ?? throw new ScriptException("BYTECODE", "循环条件缺少变量位置");
                 if ((uint)loop.CounterSlot >= (uint)frame.LocalSlots.Length || (uint)loop.BoundSlot >= (uint)frame.LocalSlots.Length
@@ -784,7 +796,7 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
                 long step = frame.LocalSlots[loop.StepSlot].Read(0).AsInt();
                 bool active = step > 0 ? frame.LocalSlots[loop.CounterSlot].Read(loop.CounterIndex).AsInt() < frame.LocalSlots[loop.BoundSlot].Read(0).AsInt()
                     : step < 0 && frame.LocalSlots[loop.CounterSlot].Read(loop.CounterIndex).AsInt() > frame.LocalSlots[loop.BoundSlot].Read(0).AsInt();
-                Put(new(active ? 1L : 0L));
+                if (!active) frame.Pc = instruction.Number;
                 break;
             }
             case Op.SwitchLocalString:

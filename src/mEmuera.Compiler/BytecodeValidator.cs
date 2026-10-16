@@ -27,7 +27,7 @@ internal static class BytecodeValidator
             };
             int produced = instruction.Op switch
             {
-                Op.Constant or Op.Reference or Op.ReadVariable or Op.ReadCharacter or Op.ReadLocal or Op.ReadLocalConstant or Op.Load or Op.Unary or Op.Binary or Op.LineCount or Op.AdvanceReference or Op.StringCall or Op.ForLocalCondition => 1,
+                Op.Constant or Op.Reference or Op.ReadVariable or Op.ReadCharacter or Op.ReadLocal or Op.ReadLocalConstant or Op.Load or Op.Unary or Op.Binary or Op.LineCount or Op.AdvanceReference or Op.StringCall => 1,
                 Op.Duplicate => 2, Op.Call or Op.DynamicCall or Op.Builtin when instruction.Value.Integer == 1 => 1, _ => 0
             };
             if (item.Depth < required) return [new("BYTECODE_STACK", "指令缺少操作数", instruction.Span)];
@@ -39,7 +39,7 @@ internal static class BytecodeValidator
                 continue;
             }
             if (instruction.Op is Op.Return or Op.Quit or Op.BeginTitle || instruction.Op == Op.Call && instruction.Value.Integer == 2) continue;
-            if (instruction.Op is Op.Jump or Op.JumpFalse or Op.JumpTrue) queue.Enqueue((instruction.Number, next));
+            if (instruction.Op is Op.Jump or Op.JumpFalse or Op.JumpTrue or Op.JumpForLocalEnd) queue.Enqueue((instruction.Number, next));
             if (instruction.Op != Op.Jump) queue.Enqueue((item.Pc + 1, next));
         }
         return [];

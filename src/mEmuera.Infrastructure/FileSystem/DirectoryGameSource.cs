@@ -164,7 +164,9 @@ public sealed class DirectoryGameSource(string root, string encoding = "utf-8", 
     }
     public async ValueTask ValidateAsync(IReadOnlyList<SourceId> sources, CancellationToken ct = default)
     {
-        await Parallel.ForEachAsync(sources, new ParallelOptions { CancellationToken = ct, MaxDegreeOfParallelism = 8 },
-            async (source, token) => await ValidateAsync(source, token));
+        ct.ThrowIfCancellationRequested();
+        // 快照和未改变文件的属性检查同步完成，逐次校验避免额外的线程池调度。
+        foreach (var source in sources)
+            await ValidateAsync(source, ct);
     }
 }

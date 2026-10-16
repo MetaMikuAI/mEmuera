@@ -8,6 +8,7 @@ namespace mEmuera.EraCompat.Builtins;
 
 internal static class StringBuiltins
 {
+    [ThreadStatic] private static HashSet<string>? validatedRegexPatterns;
     private sealed record MatchHandler(string Id) : IBuiltinHandler
     {
         public EraValue? Execute(IBuiltinContext context, ImmutableArray<BuiltinArgument> a)
@@ -261,8 +262,16 @@ internal static class StringBuiltins
     {
         public EraValue? Execute(IBuiltinContext context, ImmutableArray<BuiltinArgument> a)
         {
-            try { _ = new Regex(a[0].Value.AsString(), RegexOptions.None, TimeSpan.FromSeconds(1)); }
+            string pattern = a[0].Value.AsString();
+            var validated = validatedRegexPatterns ??= new(StringComparer.Ordinal);
+            if (validated.Contains(pattern)) return null;
+            try { _ = new Regex(pattern, RegexOptions.None, TimeSpan.FromSeconds(1)); }
             catch (ArgumentException) { throw new ScriptException("REGEX", "正则表达式无效"); }
+            if (pattern.Length <= 4096)
+            {
+                if (validated.Count == 256) validated.Clear();
+                validated.Add(pattern);
+            }
             return null;
         }
     }

@@ -147,7 +147,14 @@ static async Task<int> MainAsync(string[] args)
             return session.InspectSelected(reportSelection.Where(s => s.Character is null || s.Character >= 0 && s.Character < count));
         }
         using var checkpoints = Option("--checkpoints") is { } checkpointPath ? new StreamWriter(checkpointPath, false) { AutoFlush = true } : null;
+        using var measuredProcess = System.Diagnostics.Process.GetCurrentProcess();
         int steps = 0; long? interactionStart = null; var latencies = new List<double>();
+        TimeSpan cpuStart = default;
+        int gen0Start = 0, gen1Start = 0, gen2Start = 0;
+        var interactionCpuMilliseconds = new List<double>();
+        var interactionGen0Collections = new List<int>();
+        var interactionGen1Collections = new List<int>();
+        var interactionGen2Collections = new List<int>();
         long allocationStart = 0;
         var interactionAllocatedBytes = new List<long>();
         var interactionCompilations = new List<long>();
@@ -192,6 +199,11 @@ static async Task<int> MainAsync(string[] args)
             {
                 latencies.Add(System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds);
                 interactionAllocatedBytes.Add(GC.GetTotalAllocatedBytes(false) - allocationStart);
+                interactionGen0Collections.Add(GC.CollectionCount(0) - gen0Start);
+                interactionGen1Collections.Add(GC.CollectionCount(1) - gen1Start);
+                interactionGen2Collections.Add(GC.CollectionCount(2) - gen2Start);
+                measuredProcess.Refresh();
+                interactionCpuMilliseconds.Add((measuredProcess.TotalProcessorTime - cpuStart).TotalMilliseconds);
                 interactionCompilations.Add(workspace.CacheMisses - compilationStart);
                 interactionCompileMilliseconds.Add(workspace.CompileMilliseconds - compileTimeStart);
                 interactionDynamicCompilations.Add(dynamicCompilations - dynamicCompilationStart);
@@ -227,6 +239,9 @@ static async Task<int> MainAsync(string[] args)
             var action = actions[next++];
             var snapshot = session.InspectSelected((action.Expect?.Selection ?? []).Concat(action.ExpectVariable is { } name ? [new StateSelection(name)] : []));
             action.Expect?.Check(snapshot);
+            measuredProcess.Refresh();
+            cpuStart = measuredProcess.TotalProcessorTime;
+            gen0Start = GC.CollectionCount(0); gen1Start = GC.CollectionCount(1); gen2Start = GC.CollectionCount(2);
             interactionStart = System.Diagnostics.Stopwatch.GetTimestamp();
             allocationStart = GC.GetTotalAllocatedBytes(false);
             compilationStart = workspace.CacheMisses;
@@ -268,6 +283,8 @@ static async Task<int> MainAsync(string[] args)
                 measurement = "headless reply to next pause; excludes terminal drawing", samples = ordered.Length,
                 p50Ms = Percentile(.5), p95Ms = Percentile(.95), totalMs = watch.Elapsed.TotalMilliseconds,
                 interactionAllocatedBytes, interactionMilliseconds = latencies,
+                cpuMeasurement = "process-wide CPU time including background threads; short interactions may be below OS timer resolution",
+                interactionCpuMilliseconds, interactionGen0Collections, interactionGen1Collections, interactionGen2Collections,
                 interactionCompilations, interactionCompileMilliseconds,
                 peakRssBytes = System.Diagnostics.Process.GetCurrentProcess().PeakWorkingSet64, workspace.CacheHits, workspace.CacheMisses,
                 workspace.SourceCacheHits, workspace.CachedSources, workspace.CompileMilliseconds, workspace.EstimatedCacheBytes,

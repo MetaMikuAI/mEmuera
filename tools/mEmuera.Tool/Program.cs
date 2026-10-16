@@ -168,6 +168,9 @@ static async Task<int> MainAsync(string[] args)
         var interactionCompileMilliseconds = new List<double>();
         var interactionValidationMilliseconds = new List<double>();
         var interactionSourceReadMilliseconds = new List<double>();
+        var interactionReadBytes = new List<long>();
+        var interactionReadFiles = new List<long>();
+        long readBytesStart = 0, readFilesStart = 0;
         long compilationStart = 0;
         double compileTimeStart = 0;
         double validationTimeStart = 0, sourceReadTimeStart = 0;
@@ -218,6 +221,8 @@ static async Task<int> MainAsync(string[] args)
                 interactionCompileMilliseconds.Add(workspace.CompileMilliseconds - compileTimeStart);
                 interactionValidationMilliseconds.Add(workspace.ValidationMilliseconds - validationTimeStart);
                 interactionSourceReadMilliseconds.Add(workspace.SourceReadMilliseconds - sourceReadTimeStart);
+                interactionReadBytes.Add(source.ReadBytes - readBytesStart);
+                interactionReadFiles.Add(source.ReadFiles - readFilesStart);
                 interactionDynamicCompilations.Add(dynamicCompilations - dynamicCompilationStart);
                 interactionDynamicServiceMilliseconds.Add(dynamicServiceMilliseconds - dynamicServiceTimeStart);
                 interactionStart = null;
@@ -260,6 +265,7 @@ static async Task<int> MainAsync(string[] args)
             compileTimeStart = workspace.CompileMilliseconds;
             validationTimeStart = workspace.ValidationMilliseconds;
             sourceReadTimeStart = workspace.SourceReadMilliseconds;
+            readBytesStart = source.ReadBytes; readFilesStart = source.ReadFiles;
             dynamicCompilationStart = dynamicCompilations;
             dynamicServiceTimeStart = dynamicServiceMilliseconds;
             if (action.ExpectVariable is { } variable && snapshot.Variables[variable][0].ToString() != action.ExpectValue) throw new ScriptException("REPLAY_ASSERT", "变量断言失败: " + variable);
@@ -301,6 +307,7 @@ static async Task<int> MainAsync(string[] args)
                 interactionCpuMilliseconds, interactionGen0Collections, interactionGen1Collections, interactionGen2Collections,
                 interactionCompilations, interactionCompileMilliseconds,
                 interactionValidationMilliseconds, interactionSourceReadMilliseconds,
+                interactionReadBytes, interactionReadFiles,
                 peakRssBytes = System.Diagnostics.Process.GetCurrentProcess().PeakWorkingSet64, workspace.CacheHits, workspace.CacheMisses,
                 workspace.SourceCacheHits, workspace.CachedSources, workspace.CompileMilliseconds, workspace.EstimatedCacheBytes,
                 source.ReadBytes, source.ReadFiles, indexed.Index.Identity, final.Mode, characterCount = final.Characters.Length,

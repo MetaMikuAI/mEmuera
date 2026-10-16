@@ -54,8 +54,10 @@ public sealed class CellScreen(PointerQueryState? pointerQuery = null)
         if (snapshot is null || layout is null || delta == 0) return;
         scrolling.Scroll(delta);
         layout = CellLayout.Visible(snapshot.Document, Columns, Rows, scrolling.OffsetFromBottom, ++revision);
+        int offset = scrolling.OffsetFromBottom;
         scrolling.Clamp(layout.Rows - Rows);
-        layout = CellLayout.Visible(snapshot.Document, Columns, Rows, scrolling.OffsetFromBottom, ++revision);
+        if (offset != scrolling.OffsetFromBottom)
+            layout = CellLayout.Visible(snapshot.Document, Columns, Rows, scrolling.OffsetFromBottom, ++revision);
         Observe();
     }
 

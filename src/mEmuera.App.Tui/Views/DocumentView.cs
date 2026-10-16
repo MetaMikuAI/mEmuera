@@ -95,8 +95,10 @@ public sealed class DocumentView : View
         if (snapshot is null || layout is null) return;
         scrolling.Scroll(delta);
         layout = CellLayout.Visible(snapshot.Document, Viewport.Width, Viewport.Height, scrolling.OffsetFromBottom, ++revision);
+        int offset = scrolling.OffsetFromBottom;
         scrolling.Clamp(layout.Rows - Viewport.Height);
-        layout = CellLayout.Visible(snapshot.Document, Viewport.Width, Viewport.Height, scrolling.OffsetFromBottom, ++revision);
+        if (offset != scrolling.OffsetFromBottom)
+            layout = CellLayout.Visible(snapshot.Document, Viewport.Width, Viewport.Height, scrolling.OffsetFromBottom, ++revision);
         router.Update(layout, snapshot.Input);
         pointerQuery.Observe(layout, snapshot.Epoch, Viewport.Height, scrolling.OffsetFromBottom);
         PublishPointer(); tooltip.Rehit(layout, pointerPosition, Environment.TickCount64); TickTooltip(); SetNeedsDraw();

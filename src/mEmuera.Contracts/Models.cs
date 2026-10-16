@@ -204,7 +204,8 @@ public enum Op
     Call, DynamicCall, Return, Emit, Button, Input, ClearLine, Color, Save, LoadSave, BeginTitle, Quit, LineCount, Builtin, StoreArray,
     StringCall, Throw, ReadVariable, ReadCharacter, ReadLocal, ReadLocalConstant, StoreLocalConstant, SwitchLocalString, SwitchLocalInteger, JumpForLocalEnd, IncrementLocal
 }
-public sealed record LocalLoopCondition(int CounterSlot, int CounterIndex, int BoundSlot, int StepSlot);
+public sealed record CharacterLoopFill(VariableDescriptor Variable, int CharacterSlot, int CharacterIndex, EraValue Value);
+public sealed record LocalLoopCondition(int CounterSlot, int CounterIndex, int BoundSlot, int StepSlot, CharacterLoopFill? Fill = null);
 public sealed record Instruction(Op Op, string Text, int Number, EraValue Value, SourceSpan Span)
 {
     public VariableDescriptor? ResolvedVariable { get; init; }

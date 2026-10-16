@@ -382,6 +382,24 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
         }
         ReadStoreTarget(store); Expression(step); Emit(Op.Binary, "+"); Store(store);
     }
+    private void OptimizeCharacterFill(Block block)
+    {
+        int start = block.Start;
+        if (code.Count - start != 6 || code[start] is not { Op: Op.JumpForLocalEnd, LoopCondition: { } loop }) return;
+        var character = code[start + 1]; var counter = code[start + 2];
+        var reference = code[start + 3]; var value = code[start + 4];
+        if (character.Op != Op.ReadLocalConstant || counter.Op != Op.ReadLocalConstant
+            || counter.LocalSlot != loop.CounterSlot || counter.Number != loop.CounterIndex
+            || character.LocalSlot == loop.CounterSlot && character.Number == loop.CounterIndex
+            || reference.Op != Op.Reference || reference.Number != 2 || reference.Value.Integer != 1
+            || value.Op != Op.Constant || code[start + 5].Op != Op.Store
+            || locals.Any(v => v.Name == reference.Text) || descriptor.Parameters.Any(p => p.Name == reference.Text)) return;
+        var variable = Resolve(reference.Text);
+        if (variable is not { Scope: VariableScope.Character, Rank: 1, CharacterScalar: false, ReadOnly: false, Reference: false }
+            || variable.Kind != value.Value.Kind) return;
+        code[start] = code[start] with { LoopCondition = loop with
+            { Fill = new(variable, character.LocalSlot, character.Number, value.Value) } };
+    }
     private void Call(string name, IReadOnlyList<Expr> args, int mode)
     {
         var target = index.Find(name) ?? throw new ScriptException("UNDEFINED_FUNCTION", "未定义函数: " + name, span);
@@ -705,7 +723,7 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
             {
                 var block = Top(name == "NEXT" ? "FOR" : "WHILE"); blocks.Pop();
                 foreach (int at in block.Continues) Patch(at, code.Count);
-                if (block.Kind == "FOR") Increment(block.Counter!, Var(block.Step));
+                if (block.Kind == "FOR") { OptimizeCharacterFill(block); Increment(block.Counter!, Var(block.Step)); }
                 Emit(Op.Jump, number: block.Start); Patch(block.False, code.Count); foreach (int at in block.Ends) Patch(at, code.Count); break;
             }
             case "BREAK": case "CONTINUE":

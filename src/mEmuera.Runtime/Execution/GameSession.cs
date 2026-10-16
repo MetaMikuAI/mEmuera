@@ -573,6 +573,20 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
         if (index < 0 || index >= cell.Length) throw new ScriptException("BOUNDS", "数组下标越界: " + instruction.Text);
         return cell.Read((int)index);
     }
+    private bool TryFillCharacterLoop(Frame frame, LocalLoopCondition loop, CharacterLoopFill fill)
+    {
+        long start = frame.LocalSlots[loop.CounterSlot].Read(loop.CounterIndex).AsInt();
+        long end = frame.LocalSlots[loop.BoundSlot].Read(0).AsInt();
+        // 有界、无错误的循环才批量执行；其余保留逐项写入和原有错误位置。
+        if (start < 0 || end > fill.Variable.Length || end <= start || end - start > 256) return false;
+        long character = frame.LocalSlots[fill.CharacterSlot].Read(fill.CharacterIndex).AsInt();
+        if (character < 0 || character >= characters.Count) return false;
+        var values = characters.ValuesAt(character, fill.Variable.Name);
+        if (end > values.Length) return false;
+        Array.Fill(values, fill.Value, (int)start, (int)(end - start));
+        frame.LocalSlots[loop.CounterSlot].Write(loop.CounterIndex, new(end));
+        return true;
+    }
     private bool allowDoTrain;
     void IBuiltinContext.DoTrain(long command)
     {
@@ -796,7 +810,7 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
                 long step = frame.LocalSlots[loop.StepSlot].Read(0).AsInt();
                 bool active = step > 0 ? frame.LocalSlots[loop.CounterSlot].Read(loop.CounterIndex).AsInt() < frame.LocalSlots[loop.BoundSlot].Read(0).AsInt()
                     : step < 0 && frame.LocalSlots[loop.CounterSlot].Read(loop.CounterIndex).AsInt() > frame.LocalSlots[loop.BoundSlot].Read(0).AsInt();
-                if (!active) frame.Pc = instruction.Number;
+                if (!active || step == 1 && loop.Fill is { } fill && TryFillCharacterLoop(frame, loop, fill)) frame.Pc = instruction.Number;
                 break;
             }
             case Op.SwitchLocalString:

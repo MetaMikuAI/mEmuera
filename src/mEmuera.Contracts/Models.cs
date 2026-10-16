@@ -202,13 +202,14 @@ public enum Op
 {
     Constant, Load, Reference, Store, Duplicate, Pop, Unary, Binary, Jump, JumpFalse, JumpTrue, AdvanceReference,
     Call, DynamicCall, Return, Emit, Button, Input, ClearLine, Color, Save, LoadSave, BeginTitle, Quit, LineCount, Builtin, StoreArray,
-    StringCall, Throw, ReadVariable, ReadCharacter, ReadLocal, ReadLocalConstant, StoreLocalConstant, SwitchLocalString
+    StringCall, Throw, ReadVariable, ReadCharacter, ReadLocal, ReadLocalConstant, StoreLocalConstant, SwitchLocalString, SwitchLocalInteger
 }
 public sealed record Instruction(Op Op, string Text, int Number, EraValue Value, SourceSpan Span)
 {
     public VariableDescriptor? ResolvedVariable { get; init; }
     public int LocalSlot { get; init; } = -1;
     public ImmutableDictionary<string, int>? StringTargets { get; init; }
+    public ImmutableDictionary<long, int>? IntegerTargets { get; init; }
 }
 public sealed record CompiledFunction(FunctionDescriptor Descriptor, ImmutableArray<Instruction> Code);
 public sealed record CompileResult(CompiledFunction? Function, ImmutableArray<Diagnostic> Diagnostics)

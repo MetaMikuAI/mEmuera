@@ -32,10 +32,10 @@ internal static class BytecodeValidator
             };
             if (item.Depth < required) return [new("BYTECODE_STACK", "指令缺少操作数", instruction.Span)];
             int next = item.Depth - required + produced;
-            if (instruction.Op == Op.SwitchLocalString)
+            if (instruction.Op is Op.SwitchLocalString or Op.SwitchLocalInteger)
             {
                 queue.Enqueue((instruction.Number, next));
-                foreach (int target in instruction.StringTargets!.Values) queue.Enqueue((target, next));
+                foreach (int target in instruction.Op == Op.SwitchLocalString ? instruction.StringTargets!.Values : instruction.IntegerTargets!.Values) queue.Enqueue((target, next));
                 continue;
             }
             if (instruction.Op is Op.Return or Op.Quit or Op.BeginTitle || instruction.Op == Op.Call && instruction.Value.Integer == 2) continue;

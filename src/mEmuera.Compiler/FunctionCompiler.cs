@@ -46,8 +46,19 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
         public string Bound = "";
         public string Step = "";
         public Dictionary<string, int>? StringTargets;
+        public Dictionary<long, int>? IntegerTargets;
         public int DefaultTarget = -1;
         public int CaseCount;
+    }
+    private bool TryCaseInteger(Expr expression, out long value)
+    {
+        if (expression is Literal { Value.Kind: ValueKind.Integer } literal)
+        { value = literal.Value.Integer; return true; }
+        if (expression is Variable { ExplicitIndices: false } variable
+            && Resolve(variable.Name) is { ReadOnly: true, Reference: false, Kind: ValueKind.Integer, Length: 1 } specification
+            && specification.Scope != VariableScope.Character && specification.Initial.Length == 1)
+        { value = specification.Initial[0].Integer; return true; }
+        value = 0; return false;
     }
     private int Emit(Op op, string text = "", int number = 0, EraValue value = default, VariableDescriptor? variable = null, int localSlot = -1)
     {
@@ -556,12 +567,14 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
             case "SELECTCASE":
             {
                 var selector = Parse(rest); var kind = Kind(selector); string temp = Temporary(kind); Assign(Var(temp), selector);
-                blocks.Push(new("SELECT", code.Count) { Variable = temp, StringTargets = kind == ValueKind.String ? new(StringComparer.Ordinal) : null }); break;
+                blocks.Push(new("SELECT", code.Count) { Variable = temp, StringTargets = kind == ValueKind.String ? new(StringComparer.Ordinal) : null,
+                    IntegerTargets = kind == ValueKind.Integer ? new() : null }); break;
             }
             case "CASE": case "CASEELSE":
             {
                 var block = Top("SELECT");
-                if ((block.CaseCount++ == 0 && block.Start != code.Count) || block.DefaultTarget >= 0) block.StringTargets = null;
+                if ((block.CaseCount++ == 0 && block.Start != code.Count) || block.DefaultTarget >= 0)
+                { block.StringTargets = null; block.IntegerTargets = null; }
                 if (block.Start != code.Count) block.Ends.Add(Emit(Op.Jump));
                 if (block.False >= 0) Patch(block.False, code.Count);
                 block.False = -1;
@@ -570,6 +583,7 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
                     if (args.Count > 1 && args[^1].Length == 0) args.RemoveAt(args.Count - 1);
                     Expr? condition = null;
                     List<string>? keys = block.StringTargets is null ? null : [];
+                    List<long>? integers = block.IntegerTargets is null ? null : [];
                     for (int i = 0; i < args.Count; i++)
                     {
                         Expr item;
@@ -577,14 +591,23 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
                         if (range >= 0)
                         {
                             block.StringTargets = null;
-                            item = new Binary("&&", new Binary(">=", Var(block.Variable), Parse(args[i][..range])),
-                                new Binary("<=", Var(block.Variable), Parse(args[i][(range + 4)..])));
+                            var lower = Parse(args[i][..range]); var upper = Parse(args[i][(range + 4)..]);
+                            if (integers is not null && TryCaseInteger(lower, out long first) && TryCaseInteger(upper, out long last)
+                                && first <= last && (decimal)last - first <= 256)
+                            {
+                                for (long key = first; ; key++)
+                                { integers.Add(key); if (key == last) break; }
+                            }
+                            else block.IntegerTargets = null;
+                            item = new Binary("&&", new Binary(">=", Var(block.Variable), lower),
+                                new Binary("<=", Var(block.Variable), upper));
                         }
                         else if (args[i].StartsWith("IS", StringComparison.OrdinalIgnoreCase) && args[i].Length > 2 && (char.IsWhiteSpace(args[i][2]) || "<>=!".Contains(args[i][2])))
                         {
                             if (Parse("0 " + args[i][2..]) is not Binary comparison || comparison.Operator is not ("==" or "!=" or "<" or ">" or "<=" or ">="))
                                 throw new ScriptException("CASE", "CASE IS 需要比较运算符", span);
                             block.StringTargets = null;
+                            block.IntegerTargets = null;
                             item = comparison with { Left = Var(block.Variable) };
                         }
                         else
@@ -592,6 +615,8 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
                             var value = Parse(args[i]);
                             if (value is Literal { Value.Kind: ValueKind.String } literal) keys?.Add(literal.Value.AsString());
                             else block.StringTargets = null;
+                            if (integers is not null && TryCaseInteger(value, out long integer)) integers.Add(integer);
+                            else block.IntegerTargets = null;
                             item = new Binary("==", Var(block.Variable), value);
                         }
                         condition = condition is null ? item : new Binary("||", condition, item);
@@ -600,6 +625,11 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
                     block.False = Emit(Op.JumpFalse);
                     if (block.StringTargets is { } targets)
                         foreach (string key in keys!) targets.TryAdd(key, code.Count);
+                    if (block.IntegerTargets is { } integerTargets)
+                    {
+                        foreach (long key in integers!) integerTargets.TryAdd(key, code.Count);
+                        if (integerTargets.Count > 1024) block.IntegerTargets = null;
+                    }
                 }
                 else block.DefaultTarget = code.Count;
                 break;
@@ -611,6 +641,9 @@ internal sealed partial class FunctionCompiler(ProgramIndex index, FunctionDescr
                     // 保留原指令地址，已有标签和跳转仍然有效；重复值保留首次出现的分支。
                     code[block.Start] = new(Op.SwitchLocalString, block.Variable, block.DefaultTarget >= 0 ? block.DefaultTarget : code.Count, default, code[block.Start].Span)
                     { LocalSlot = locals.FindIndex(v => v.Name == block.Variable), StringTargets = targets.ToImmutableDictionary(StringComparer.Ordinal) };
+                if (block.IntegerTargets is { Count: >= 4 } integerTargets)
+                    code[block.Start] = new(Op.SwitchLocalInteger, block.Variable, block.DefaultTarget >= 0 ? block.DefaultTarget : code.Count, default, code[block.Start].Span)
+                    { LocalSlot = locals.FindIndex(v => v.Name == block.Variable), IntegerTargets = integerTargets.ToImmutableDictionary() };
                 break;
             }
             case "WHILE":

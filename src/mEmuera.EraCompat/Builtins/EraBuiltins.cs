@@ -302,8 +302,8 @@ public static class EraBuiltins
         Pure("TOUPPER", ValueKind.String, [ValueKind.String], a => new(a[0].AsString().ToUpperInvariant()));
         Pure("STRCOUNT", ValueKind.Integer, [ValueKind.String, ValueKind.String], a =>
         {
-            try { return new((long)System.Text.RegularExpressions.Regex.Matches(a[0].AsString(), a[1].AsString(),
-                System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromSeconds(1)).Count); }
+            try { return new((long)System.Text.RegularExpressions.Regex.Count(a[0].AsString(), a[1].AsString(),
+                System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromSeconds(1))); }
             catch (ArgumentException) { throw new ScriptException("REGEX", "STRCOUNT 正则表达式无效"); }
             catch (System.Text.RegularExpressions.RegexMatchTimeoutException) { throw new ScriptException("REGEX_TIMEOUT", "STRCOUNT 正则表达式执行超时"); }
         });

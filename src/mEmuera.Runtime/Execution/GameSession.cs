@@ -820,6 +820,18 @@ public sealed partial class GameSession : IGameSession, IBuiltinContext, IFlowSt
                 stack.Add(new(default, reference with { Index = next })); break;
             }
             case Op.Jump: frame.Pc = instruction.Number; break;
+            case Op.JumpMissingArgument:
+            case Op.JumpValueArgument:
+            {
+                if ((uint)instruction.LocalSlot >= (uint)frame.LocalSlots.Length) throw new ScriptException("BYTECODE", "局部变量位置无效");
+                var function = game.Index.Find(frame.LocalSlots[instruction.LocalSlot].Read(0).AsString());
+                long position = instruction.Value.Integer;
+                bool present = function is not null && position >= 0 && position < function.Parameters.Length;
+                bool accepted = instruction.Op == Op.JumpMissingArgument ? present
+                    : present && function!.Parameters[(int)position].Reference && ReferenceRank(function, function.Parameters[(int)position]) > 0;
+                if (!accepted) frame.Pc = instruction.Number;
+                break;
+            }
             case Op.JumpForLocalEnd:
             {
                 var loop = instruction.LoopCondition ?? throw new ScriptException("BYTECODE", "循环条件缺少变量位置");

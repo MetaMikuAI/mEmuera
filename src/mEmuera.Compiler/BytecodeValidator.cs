@@ -39,7 +39,7 @@ internal static class BytecodeValidator
                 continue;
             }
             if (instruction.Op is Op.Return or Op.Quit or Op.BeginTitle || instruction.Op == Op.Call && instruction.Value.Integer == 2) continue;
-            if (instruction.Op is Op.Jump or Op.JumpFalse or Op.JumpTrue or Op.JumpForLocalEnd) queue.Enqueue((instruction.Number, next));
+            if (instruction.Op is Op.Jump or Op.JumpFalse or Op.JumpTrue or Op.JumpForLocalEnd or Op.JumpMissingArgument or Op.JumpValueArgument) queue.Enqueue((instruction.Number, next));
             if (instruction.Op != Op.Jump) queue.Enqueue((item.Pc + 1, next));
         }
         return [];

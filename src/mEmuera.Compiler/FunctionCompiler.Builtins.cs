@@ -518,6 +518,8 @@ internal sealed partial class FunctionCompiler
     {
         var signature = builtins.Find(name)!;
         int count = Math.Max(signature.Parameters.Length, arguments.Count);
+        int methodTarget = name is "GETMETH" or "GETMETHS" && arguments[0] is Variable target
+            ? locals.FindIndex(v => v.Name == target.Name) : -1;
         for (int i = 0; i < count; i++)
         {
             int ignored = -1;
@@ -529,8 +531,12 @@ internal sealed partial class FunctionCompiler
                 || name is "XML_GET" or "XML_GET_BYNAME" or "$XML_GET" or "$XML_GET_BYNAME" && i == 2 && i < arguments.Count && arguments[i] is Variable && Kind(arguments[i]) == ValueKind.String;
             if (name is "GETMETH" or "GETMETHS" && i >= 2)
             {
-                Expression(arguments[0]); Builtin("$CALL_ARITY"); Emit(Op.Constant, value: new((long)(i - 2))); Emit(Op.Binary, ">");
-                ignored = Emit(Op.JumpFalse);
+                if (methodTarget >= 0) ignored = Emit(Op.JumpMissingArgument, value: new((long)(i - 2)), localSlot: methodTarget);
+                else
+                {
+                    Expression(arguments[0]); Builtin("$CALL_ARITY"); Emit(Op.Constant, value: new((long)(i - 2))); Emit(Op.Binary, ">");
+                    ignored = Emit(Op.JumpFalse);
+                }
             }
             if (i >= arguments.Count || arguments[i] is Omitted) Emit(Op.Constant, text: "$omitted", value: signature.Parameter(i).Default!.Value);
             else if (signature.Parameter(i).VariableName) Emit(Op.Constant, value: new EraValue(((Variable)arguments[i]).Name));
@@ -544,8 +550,14 @@ internal sealed partial class FunctionCompiler
             {
                 if (name is "GETMETH" or "GETMETHS" && i >= 2)
                 {
-                    Expression(arguments[0]); Emit(Op.Constant, value: new((long)(i - 2))); Builtin("$CALL_REFERENCE");
-                    int valueParameter = Emit(Op.JumpFalse); ArrayArgumentReference(variable); int end = Emit(Op.Jump);
+                    int valueParameter;
+                    if (methodTarget >= 0) valueParameter = Emit(Op.JumpValueArgument, value: new((long)(i - 2)), localSlot: methodTarget);
+                    else
+                    {
+                        Expression(arguments[0]); Emit(Op.Constant, value: new((long)(i - 2))); Builtin("$CALL_REFERENCE");
+                        valueParameter = Emit(Op.JumpFalse);
+                    }
+                    ArrayArgumentReference(variable); int end = Emit(Op.Jump);
                     Patch(valueParameter, code.Count); Reference(variable); Patch(end, code.Count);
                 }
                 else if (tableArray || name is "ARRAYMSORT" or "ARRAYMSORTEX" or "$ARRAYMSORTEX") ArrayArgumentReference(variable);

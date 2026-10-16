@@ -154,9 +154,12 @@ internal sealed class GamePage : IAsyncDisposable
     private void ApplySnapshot(SessionSnapshot snapshot)
     {
         bool requestChanged = snapshot.Input?.Id != current?.Input?.Id || snapshot.Epoch != current?.Epoch;
+        bool redraw = current is null || snapshot.Epoch != current.Epoch
+            || snapshot.Document != current.Document || snapshot.Input != current.Input;
         current = snapshot; Volatile.Write(ref currentAt, System.Environment.TickCount64);
         if (requestChanged) notice = null;
-        screen.Update(snapshot); terminal.Redraw();
+        screen.Update(snapshot);
+        if (redraw) terminal.Redraw();
         if (renderedTextBox != (snapshot.Epoch, snapshot.TextBoxRevision))
         {
             renderedTextBox = (snapshot.Epoch, snapshot.TextBoxRevision);
